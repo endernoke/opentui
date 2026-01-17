@@ -25,8 +25,13 @@ export async function createTestRenderer(options: TestRendererOptions): Promise<
   resize: (width: number, height: number) => void
 }> {
   process.env.OTUI_USE_CONSOLE = "false"
+
+  // Convert legacy kittyKeyboard boolean to new format
+  const useKittyKeyboard = options.kittyKeyboard ? { events: true } : options.useKittyKeyboard
+
   const renderer = await setupTestRenderer({
     ...options,
+    useKittyKeyboard,
     useAlternateScreen: false,
     useConsole: false,
   })
@@ -88,7 +93,7 @@ async function setupTestRenderer(config: TestRendererOptions) {
 
   process.off("SIGWINCH", renderer["sigwinchHandler"])
 
-  // Do not setup the terminal for testing as we will not actualy output anything to the terminal
+  // Do not setup the terminal for testing as we will not actually output anything to the terminal
   // await renderer.setupTerminal()
 
   return renderer

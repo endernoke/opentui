@@ -6,6 +6,7 @@ import type {
   ExtendedIntrinsicElements,
   InputProps,
   ImageProps,
+  LinkProps,
   OpenTUIComponents,
   ScrollBoxProps,
   SelectProps,
@@ -41,6 +42,7 @@ declare namespace JSX {
     em: SpanProps
     u: SpanProps
     br: {}
+    a: LinkProps
   }
 
   interface ElementChildrenAttribute {

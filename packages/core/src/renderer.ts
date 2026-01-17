@@ -95,7 +95,7 @@ export interface CliRendererConfig {
   useAlternateScreen?: boolean
   useConsole?: boolean
   experimental_splitHeight?: number
-  useKittyKeyboard?: boolean
+  useKittyKeyboard?: KittyKeyboardOptions | null
   backgroundColor?: ColorInput
   openConsoleOnError?: boolean
   prependInputHandlers?: ((sequence: string) => boolean)[]
@@ -109,6 +109,74 @@ export type PixelResolution = {
 export type CellMetrics = {
   pxPerCellX: number
   pxPerCellY: number
+}
+
+// Kitty keyboard protocol flags
+// See: https://sw.kovidgoyal.net/kitty/keyboard-protocol/
+const KITTY_FLAG_DISAMBIGUATE = 0b1 // Report disambiguated escape codes
+const KITTY_FLAG_EVENT_TYPES = 0b10 // Report event types (press/repeat/release)
+const KITTY_FLAG_ALTERNATE_KEYS = 0b100 // Report alternate keys (e.g., numpad vs regular)
+const KITTY_FLAG_ALL_KEYS_AS_ESCAPES = 0b1000 // Report all keys as escape codes
+const KITTY_FLAG_REPORT_TEXT = 0b10000 // Report text associated with key events
+
+/**
+ * Kitty Keyboard Protocol configuration options
+ * See: https://sw.kovidgoyal.net/kitty/keyboard-protocol/#progressive-enhancement
+ */
+export interface KittyKeyboardOptions {
+  /** Disambiguate escape codes (fixes ESC timing, alt+key ambiguity, ctrl+c as event). Default: true */
+  disambiguate?: boolean
+  /** Report alternate keys (numpad, shifted, base layout) for cross-keyboard shortcuts. Default: true */
+  alternateKeys?: boolean
+  /** Report event types (press/repeat/release). Default: false */
+  events?: boolean
+  /** Report all keys as escape codes. Default: false */
+  allKeysAsEscapes?: boolean
+  /** Report text associated with key events. Default: false */
+  reportText?: boolean
+}
+
+/**
+ * Build kitty keyboard protocol flags based on configuration
+ * @param config Kitty keyboard configuration object (null/undefined = disabled)
+ * @returns The combined flags value (0 = disabled, >0 = enabled)
+ * @internal Exported for testing
+ */
+export function buildKittyKeyboardFlags(config: KittyKeyboardOptions | null | undefined): number {
+  if (!config) {
+    return 0
+  }
+
+  let flags = 0
+
+  // Default: disambiguate + alternate keys (both default to true)
+  // - Disambiguate (0b1): Fixes ESC timing issues, alt+key ambiguity, makes ctrl+c a key event
+  // - Alternate keys (0b100): Reports shifted/base-layout keys for cross-keyboard shortcuts
+
+  // disambiguate defaults to true unless explicitly set to false
+  if (config.disambiguate !== false) {
+    flags |= KITTY_FLAG_DISAMBIGUATE
+  }
+
+  // alternateKeys defaults to true unless explicitly set to false
+  if (config.alternateKeys !== false) {
+    flags |= KITTY_FLAG_ALTERNATE_KEYS
+  }
+
+  // Optional flags (default to false, only enabled when explicitly true)
+  if (config.events === true) {
+    flags |= KITTY_FLAG_EVENT_TYPES
+  }
+
+  if (config.allKeysAsEscapes === true) {
+    flags |= KITTY_FLAG_ALL_KEYS_AS_ESCAPES
+  }
+
+  if (config.reportText === true) {
+    flags |= KITTY_FLAG_REPORT_TEXT
+  }
+
+  return flags
 }
 
 export class MouseEvent {
@@ -213,8 +281,10 @@ export async function createCliRenderer(config: CliRendererConfig = {}): Promise
   }
   ziglib.setUseThread(rendererPtr, config.useThread)
 
-  const useKittyKeyboard = config.useKittyKeyboard ?? true
-  ziglib.setUseKittyKeyboard(rendererPtr, useKittyKeyboard)
+  const kittyConfig = config.useKittyKeyboard ?? {}
+  const kittyFlags = buildKittyKeyboardFlags(kittyConfig)
+
+  ziglib.setKittyKeyboardFlags(rendererPtr, kittyFlags)
 
   const renderer = new CliRenderer(ziglib, rendererPtr, stdin, stdout, width, height, config)
   await renderer.setupTerminal()
@@ -245,6 +315,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private exitSignals: NodeJS.Signals[]
   private _exitListenersAdded: boolean = false
   private _isDestroyed: boolean = false
+  private _destroyPending: boolean = false
+  private _destroyFinalized: boolean = false
   public nextRenderBuffer: OptimizedBuffer
   public currentRenderBuffer: OptimizedBuffer
   private _isRunning: boolean = false
@@ -309,6 +381,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private animationRequest: Map<number, FrameRequestCallback> = new Map()
 
   private resizeTimeoutId: ReturnType<typeof setTimeout> | null = null
+  private capabilityTimeoutId: ReturnType<typeof setTimeout> | null = null
   private resizeDebounceDelay: number = 100
 
   private enableMouseMovement: boolean = false
@@ -346,6 +419,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }).bind(this)
   private _capabilities: any | null = null
   private _latestPointer: { x: number; y: number } = { x: 0, y: 0 }
+  private _hasPointer: boolean = false
+  private _lastPointerModifiers: RawMouseEvent["modifiers"] = { shift: false, alt: false, ctrl: false }
 
   private _currentFocusedRenderable: Renderable | null = null
   private lifecyclePasses: Set<Renderable> = new Set()
@@ -474,7 +549,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.memorySnapshotInterval = config.memorySnapshotInterval ?? 0
     this.gatherStats = config.gatherStats || false
     this.maxStatSamples = config.maxStatSamples || 300
-    this.enableMouseMovement = config.enableMouseMovement || true
+    this.enableMouseMovement = config.enableMouseMovement ?? true
     this._useMouse = config.useMouse ?? true
     this._useAlternateScreen = config.useAlternateScreen ?? env.OTUI_USE_ALTERNATE_SCREEN
     this.nextRenderBuffer = this.lib.getNextBuffer(this.rendererPtr)
@@ -501,7 +576,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     process.on("unhandledRejection", this.handleError)
     process.on("beforeExit", this.exitHandler)
 
-    this._keyHandler = new InternalKeyHandler(config.useKittyKeyboard ?? true)
+    const kittyConfig = config.useKittyKeyboard ?? {}
+    const useKittyForParsing = kittyConfig !== null
+    this._keyHandler = new InternalKeyHandler(useKittyForParsing)
     this._keyHandler.on("keypress", (event) => {
       if (this.exitOnCtrlC && event.name === "c" && event.ctrl) {
         process.nextTick(() => {
@@ -598,10 +675,29 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this._currentFocusedRenderable = renderable
   }
 
+  private setCapturedRenderable(renderable: Renderable | undefined): void {
+    if (this.capturedRenderable === renderable) {
+      return
+    }
+    this.capturedRenderable = renderable
+  }
+
   public addToHitGrid(x: number, y: number, width: number, height: number, id: number) {
     if (id !== this.capturedRenderable?.num) {
       this.lib.addToHitGrid(this.rendererPtr, x, y, width, height, id)
     }
+  }
+
+  public pushHitGridScissorRect(x: number, y: number, width: number, height: number): void {
+    this.lib.hitGridPushScissorRect(this.rendererPtr, x, y, width, height)
+  }
+
+  public popHitGridScissorRect(): void {
+    this.lib.hitGridPopScissorRect(this.rendererPtr)
+  }
+
+  public clearHitGridScissorRects(): void {
+    this.lib.hitGridClearScissorRects(this.rendererPtr)
   }
 
   public get widthMethod(): WidthMethod {
@@ -610,6 +706,15 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   private writeOut(chunk: any, encoding?: any, callback?: any): boolean {
+    if (this.rendererPtr && this._useThread) {
+      const data = typeof chunk === "string" ? chunk : (chunk?.toString() ?? "")
+      this.lib.writeOut(this.rendererPtr, data)
+      if (typeof callback === "function") {
+        process.nextTick(callback)
+      }
+      return true
+    }
+
     return this.realStdoutWrite.call(this.stdout, chunk, encoding, callback)
   }
 
@@ -758,11 +863,12 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   public get useKittyKeyboard(): boolean {
-    return this.lib.getUseKittyKeyboard(this.rendererPtr)
+    return this.lib.getKittyKeyboardFlags(this.rendererPtr) > 0
   }
 
   public set useKittyKeyboard(use: boolean) {
-    this.lib.setUseKittyKeyboard(this.rendererPtr, use)
+    const flags = use ? KITTY_FLAG_DISAMBIGUATE | KITTY_FLAG_ALTERNATE_KEYS : 0
+    this.lib.setKittyKeyboardFlags(this.rendererPtr, flags)
   }
 
   public set experimental_splitHeight(splitHeight: number) {
@@ -849,10 +955,15 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     if (space > 0) {
       const backgroundColor = this.backgroundColor.toInts()
       const newlines = " ".repeat(this.width) + "\n".repeat(space)
-      clear =
-        ANSI.setRgbBackground(backgroundColor[0], backgroundColor[1], backgroundColor[2]) +
-        newlines +
-        ANSI.resetBackground
+      // Check if background is transparent (alpha = 0)
+      if (backgroundColor[3] === 0) {
+        clear = newlines
+      } else {
+        clear =
+          ANSI.setRgbBackground(backgroundColor[0], backgroundColor[1], backgroundColor[2]) +
+          newlines +
+          ANSI.resetBackground
+      }
     }
 
     this.writeOut(flush + move + output + clear)
@@ -867,7 +978,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
   private disableMouse(): void {
     this._useMouse = false
-    this.capturedRenderable = undefined
+    this.setCapturedRenderable(undefined)
     this.mouseParser.reset()
     this.lib.disableMouse(this.rendererPtr)
   }
@@ -894,7 +1005,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.lib.setupTerminal(this.rendererPtr, this._useAlternateScreen)
     this._capabilities = this.lib.getTerminalCapabilities(this.rendererPtr)
 
-    setTimeout(() => {
+    this.capabilityTimeoutId = setTimeout(() => {
+      this.capabilityTimeoutId = null
       this.removeInputHandler(this.capabilityHandler)
     }, 5000)
 
@@ -1029,9 +1141,25 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
       this._latestPointer.x = mouseEvent.x
       this._latestPointer.y = mouseEvent.y
+      this._hasPointer = true
+      this._lastPointerModifiers = mouseEvent.modifiers
+
+      if (this._console.visible) {
+        const consoleBounds = this._console.bounds
+        if (
+          mouseEvent.x >= consoleBounds.x &&
+          mouseEvent.x < consoleBounds.x + consoleBounds.width &&
+          mouseEvent.y >= consoleBounds.y &&
+          mouseEvent.y < consoleBounds.y + consoleBounds.height
+        ) {
+          const event = new MouseEvent(null, mouseEvent)
+          const handled = this._console.handleMouse(event)
+          if (handled) return true
+        }
+      }
 
       if (mouseEvent.type === "scroll") {
-        const maybeRenderableId = this.lib.checkHit(this.rendererPtr, mouseEvent.x, mouseEvent.y)
+        const maybeRenderableId = this.hitTest(mouseEvent.x, mouseEvent.y)
         const maybeRenderable = Renderable.renderablesByNumber.get(maybeRenderableId)
 
         if (maybeRenderable) {
@@ -1041,7 +1169,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         return true
       }
 
-      const maybeRenderableId = this.lib.checkHit(this.rendererPtr, mouseEvent.x, mouseEvent.y)
+      const maybeRenderableId = this.hitTest(mouseEvent.x, mouseEvent.y)
       const sameElement = maybeRenderableId === this.lastOverRenderableNum
       this.lastOverRenderableNum = maybeRenderableId
       const maybeRenderable = Renderable.renderablesByNumber.get(maybeRenderableId)
@@ -1130,7 +1258,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         }
         this.lastOverRenderable = this.capturedRenderable
         this.lastOverRenderableNum = this.capturedRenderable.num
-        this.capturedRenderable = undefined
+        this.setCapturedRenderable(undefined)
         // Dropping the renderable needs to push another frame when the renderer is not live
         // to update the hit grid, otherwise capturedRenderable won't be in the hit grid and will not receive mouse events
         this.requestRender()
@@ -1139,14 +1267,14 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       let event: MouseEvent | undefined = undefined
       if (maybeRenderable) {
         if (mouseEvent.type === "drag" && mouseEvent.button === MouseButton.LEFT) {
-          this.capturedRenderable = maybeRenderable
+          this.setCapturedRenderable(maybeRenderable)
         } else {
-          this.capturedRenderable = undefined
+          this.setCapturedRenderable(undefined)
         }
         event = new MouseEvent(maybeRenderable, mouseEvent)
         maybeRenderable.processMouseEvent(event)
       } else {
-        this.capturedRenderable = undefined
+        this.setCapturedRenderable(undefined)
         this.lastOverRenderable = undefined
       }
 
@@ -1158,6 +1286,56 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     }
 
     return false
+  }
+
+  /**
+   * Recheck hover state after hit grid changes.
+   * Called after render when native code detects the hit grid changed.
+   * Fires out/over events if the element under the cursor changed.
+   */
+  private recheckHoverState(): void {
+    if (this._isDestroyed || !this._hasPointer) return
+    if (this.capturedRenderable) return
+
+    const hitId = this.hitTest(this._latestPointer.x, this._latestPointer.y)
+    const hitRenderable = Renderable.renderablesByNumber.get(hitId)
+    const lastOver = this.lastOverRenderable
+
+    // No change
+    if (lastOver?.num === hitId) {
+      this.lastOverRenderableNum = hitId
+      return
+    }
+
+    const baseEvent: RawMouseEvent = {
+      type: "move",
+      button: 0,
+      x: this._latestPointer.x,
+      y: this._latestPointer.y,
+      modifiers: this._lastPointerModifiers,
+    }
+
+    // Fire out on old element
+    if (lastOver) {
+      const event = new MouseEvent(lastOver, { ...baseEvent, type: "out" })
+      lastOver.processMouseEvent(event)
+    }
+
+    this.lastOverRenderable = hitRenderable
+    this.lastOverRenderableNum = hitId
+
+    // Fire over on new element
+    if (hitRenderable) {
+      const event = new MouseEvent(hitRenderable, {
+        ...baseEvent,
+        type: "over",
+      })
+      hitRenderable.processMouseEvent(event)
+    }
+  }
+
+  public hitTest(x: number, y: number): number {
+    return this.lib.checkHit(this.rendererPtr, x, y)
   }
 
   private takeMemorySnapshot(): void {
@@ -1239,7 +1417,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.cellMetrics = null
     this.queryPixelResolution()
 
-    this.capturedRenderable = undefined
+    this.setCapturedRenderable(undefined)
     this.mouseParser.reset()
 
     if (this._splitHeight > 0) {
@@ -1354,6 +1532,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
   public setCursorColor(color: RGBA): void {
     this.lib.setCursorColor(this.rendererPtr, color)
+  }
+
+  public getCursorState() {
+    return this.lib.getCursorState(this.rendererPtr)
   }
 
   public addPostProcessFn(processFn: (buffer: OptimizedBuffer, deltaTime: number) => void): void {
@@ -1510,11 +1692,40 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   public destroy(): void {
+    if (this._isDestroyed) return
+    this._isDestroyed = true
+    this._destroyPending = true
+
+    if (this.rendering) {
+      // Defer teardown until the active frame completes to avoid freeing native resources mid-render.
+      return
+    }
+
+    this.finalizeDestroy()
+  }
+
+  private finalizeDestroy(): void {
+    if (this._destroyFinalized) return
+    this._destroyFinalized = true
+    this._destroyPending = false
+
     process.removeListener("SIGWINCH", this.sigwinchHandler)
     process.removeListener("uncaughtException", this.handleError)
     process.removeListener("unhandledRejection", this.handleError)
     process.removeListener("warning", this.warningHandler)
+    process.removeListener("beforeExit", this.exitHandler)
     capture.removeListener("write", this.captureCallback)
+    this.removeExitListeners()
+
+    if (this.resizeTimeoutId !== null) {
+      clearTimeout(this.resizeTimeoutId)
+      this.resizeTimeoutId = null
+    }
+
+    if (this.capabilityTimeoutId !== null) {
+      clearTimeout(this.capabilityTimeoutId)
+      this.capabilityTimeoutId = null
+    }
 
     if (this.memorySnapshotTimer) {
       clearInterval(this.memorySnapshotTimer)
@@ -1528,9 +1739,6 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this._paletteDetectionPromise = null
     this._cachedPalette = null
 
-    if (this._isDestroyed) return
-    this._isDestroyed = true
-
     this.emit(CliRenderEvents.DESTROY)
 
     if (this.renderTimeout) {
@@ -1540,7 +1748,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this._isRunning = false
 
     this.waitingForPixelResolution = false
-    this.capturedRenderable = undefined
+    this.setCapturedRenderable(undefined)
 
     try {
       this.root.destroyRecursively()
@@ -1596,82 +1804,96 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       clearTimeout(this.renderTimeout)
       this.renderTimeout = null
     }
+    try {
+      const now = Date.now()
+      const elapsed = now - this.lastTime
 
-    const now = Date.now()
-    const elapsed = now - this.lastTime
+      const deltaTime = elapsed
+      this.lastTime = now
 
-    const deltaTime = elapsed
-    this.lastTime = now
-
-    this.frameCount++
-    if (now - this.lastFpsTime >= 1000) {
-      this.currentFps = this.frameCount
-      this.frameCount = 0
-      this.lastFpsTime = now
-    }
-
-    this.renderStats.frameCount++
-    this.renderStats.fps = this.currentFps
-    const overallStart = performance.now()
-
-    const frameRequests = Array.from(this.animationRequest.values())
-    this.animationRequest.clear()
-    const animationRequestStart = performance.now()
-    frameRequests.forEach((callback) => {
-      callback(deltaTime)
-      this.dropLive()
-    })
-    const animationRequestEnd = performance.now()
-    const animationRequestTime = animationRequestEnd - animationRequestStart
-
-    const start = performance.now()
-    for (const frameCallback of this.frameCallbacks) {
-      try {
-        await frameCallback(deltaTime)
-      } catch (error) {
-        console.error("Error in frame callback:", error)
-      }
-    }
-    const end = performance.now()
-    this.renderStats.frameCallbackTime = end - start
-
-    // Render the renderable tree
-    this.root.render(this.nextRenderBuffer, deltaTime)
-
-    for (const postProcessFn of this.postProcessFns) {
-      postProcessFn(this.nextRenderBuffer, deltaTime)
-    }
-
-    this._console.renderToBuffer(this.nextRenderBuffer)
-
-    if (!this._isDestroyed) {
-      await this.renderNative()
-
-      const overallFrameTime = performance.now() - overallStart
-
-      // TODO: Add animationRequestTime to stats
-      this.lib.updateStats(this.rendererPtr, overallFrameTime, this.renderStats.fps, this.renderStats.frameCallbackTime)
-
-      if (this.gatherStats) {
-        this.collectStatSample(overallFrameTime)
+      this.frameCount++
+      if (now - this.lastFpsTime >= 1000) {
+        this.currentFps = this.frameCount
+        this.frameCount = 0
+        this.lastFpsTime = now
       }
 
-      if (this._isRunning || this.immediateRerenderRequested) {
-        const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime
-        const delay = Math.max(1, targetFrameTime - Math.floor(overallFrameTime))
-        this.immediateRerenderRequested = false
-        this.renderTimeout = setTimeout(() => {
+      this.renderStats.frameCount++
+      this.renderStats.fps = this.currentFps
+      const overallStart = performance.now()
+
+      const frameRequests = Array.from(this.animationRequest.values())
+      this.animationRequest.clear()
+      const animationRequestStart = performance.now()
+      for (const callback of frameRequests) {
+        callback(deltaTime)
+        this.dropLive()
+      }
+      const animationRequestEnd = performance.now()
+      const animationRequestTime = animationRequestEnd - animationRequestStart
+
+      const start = performance.now()
+      for (const frameCallback of this.frameCallbacks) {
+        try {
+          await frameCallback(deltaTime)
+        } catch (error) {
+          console.error("Error in frame callback:", error)
+        }
+      }
+      const end = performance.now()
+      this.renderStats.frameCallbackTime = end - start
+
+      this.root.render(this.nextRenderBuffer, deltaTime)
+
+      for (const postProcessFn of this.postProcessFns) {
+        postProcessFn(this.nextRenderBuffer, deltaTime)
+      }
+
+      this._console.renderToBuffer(this.nextRenderBuffer)
+
+      // If destroy() was requested during this frame, skip native work and scheduling.
+      if (!this._isDestroyed) {
+        this.renderNative()
+
+        // Check if hit grid changed and recheck hover state if needed
+        if (this._useMouse && this.lib.getHitGridDirty(this.rendererPtr)) {
+          this.recheckHoverState()
+        }
+
+        const overallFrameTime = performance.now() - overallStart
+
+        // TODO: Add animationRequestTime to stats
+        this.lib.updateStats(
+          this.rendererPtr,
+          overallFrameTime,
+          this.renderStats.fps,
+          this.renderStats.frameCallbackTime,
+        )
+
+        if (this.gatherStats) {
+          this.collectStatSample(overallFrameTime)
+        }
+
+        if (this._isRunning || this.immediateRerenderRequested) {
+          const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime
+          const delay = Math.max(1, targetFrameTime - Math.floor(overallFrameTime))
+          this.immediateRerenderRequested = false
+          this.renderTimeout = setTimeout(() => {
+            this.renderTimeout = null
+            this.loop()
+          }, delay)
+        } else {
+          clearTimeout(this.renderTimeout!)
           this.renderTimeout = null
-          this.loop()
-        }, delay)
-      } else {
-        clearTimeout(this.renderTimeout!)
-        this.renderTimeout = null
+        }
       }
+    } finally {
+      this.rendering = false
+      if (this._destroyPending) {
+        this.finalizeDestroy()
+      }
+      this.resolveIdleIfNeeded()
     }
-
-    this.rendering = false
-    this.resolveIdleIfNeeded()
   }
 
   public intermediateRender(): void {
@@ -1924,11 +2146,13 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.clearSelection()
     this.selectionContainers.push(renderable.parent || this.root)
     this.currentSelection = new Selection(renderable, { x, y }, { x, y })
+    this.currentSelection.isStart = true
     this.notifySelectablesOfSelectionChange()
   }
 
   public updateSelection(currentRenderable: Renderable | undefined, x: number, y: number): void {
     if (this.currentSelection) {
+      this.currentSelection.isStart = false
       this.currentSelection.focus = { x, y }
 
       if (this.selectionContainers.length > 0) {
@@ -1959,7 +2183,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     if (this.currentSelection?.isSelecting) {
       const pointer = this._latestPointer
 
-      const maybeRenderableId = this.lib.checkHit(this.rendererPtr, pointer.x, pointer.y)
+      const maybeRenderableId = this.hitTest(pointer.x, pointer.y)
       const maybeRenderable = Renderable.renderablesByNumber.get(maybeRenderableId)
 
       this.updateSelection(maybeRenderable, pointer.x, pointer.y)
@@ -1979,6 +2203,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     if (this.currentSelection) {
       this.currentSelection.isSelecting = false
       this.emit("selection", this.currentSelection)
+      // Notify renderables that selection is finished (no longer dragging)
+      this.notifySelectablesOfSelectionChange()
     }
   }
 
@@ -2019,7 +2245,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       selectionBounds,
       container.getChildrenSortedByPrimaryAxis(),
       container.primaryAxis,
-      0,
+      0, // padding
+      0, // minTriggerSize - always perform overlap checks for selection
     )
 
     for (const child of children) {

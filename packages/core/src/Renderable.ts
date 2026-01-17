@@ -6,6 +6,7 @@ import type { MouseEventType } from "./lib/parse.mouse"
 import type { Selection } from "./lib/selection"
 import {
   parseAlign,
+  parseAlignItems,
   parseFlexDirection,
   parseJustify,
   parseOverflow,
@@ -97,6 +98,7 @@ export interface RenderableOptions<T extends BaseRenderable = BaseRenderable> ex
   visible?: boolean
   buffered?: boolean
   live?: boolean
+  opacity?: number
 
   // hooks for custom render logic
   renderBefore?: (this: T, buffer: OptimizedBuffer, deltaTime: number) => void
@@ -230,6 +232,7 @@ export abstract class Renderable extends BaseRenderable {
   protected _positionType: PositionTypeString = "relative"
   protected _overflow: OverflowString = "visible"
   protected _position: Position = {}
+  protected _opacity: number = 1.0
   private _flexShrink: number = 1
 
   private renderableMapById: Map<string, Renderable> = new Map()
@@ -273,6 +276,7 @@ export abstract class Renderable extends BaseRenderable {
     this.buffered = options.buffered ?? false
     this._live = options.live ?? false
     this._liveCount = this._live && this._visible ? 1 : 0
+    this._opacity = options.opacity !== undefined ? Math.max(0, Math.min(1, options.opacity)) : 1.0
 
     // TODO: use a global yoga config
     this.yogaNode = Yoga.Node.create(yogaConfig)
@@ -334,6 +338,18 @@ export abstract class Renderable extends BaseRenderable {
       this.blur()
     }
     this.requestRender()
+  }
+
+  public get opacity(): number {
+    return this._opacity
+  }
+
+  public set opacity(value: number) {
+    const clamped = Math.max(0, Math.min(1, value))
+    if (this._opacity !== clamped) {
+      this._opacity = clamped
+      this.requestRender()
+    }
   }
 
   public hasSelection(): boolean {
@@ -433,7 +449,7 @@ export abstract class Renderable extends BaseRenderable {
     this.parent?.propagateLiveCount(delta)
   }
 
-  public handleKeyPress?(key: KeyEvent | string): boolean
+  public handleKeyPress?(key: KeyEvent): boolean
   public handlePaste?(event: PasteEvent): void
 
   public findDescendantById(id: string): Renderable | undefined {
@@ -459,8 +475,8 @@ export abstract class Renderable extends BaseRenderable {
   public set translateX(value: number) {
     if (this._translateX === value) return
     this._translateX = value
-    this.requestRender()
     if (this.parent) this.parent.childrenPrimarySortDirty = true
+    this.requestRender()
   }
 
   public get translateY(): number {
@@ -470,12 +486,12 @@ export abstract class Renderable extends BaseRenderable {
   public set translateY(value: number) {
     if (this._translateY === value) return
     this._translateY = value
-    this.requestRender()
     if (this.parent) this.parent.childrenPrimarySortDirty = true
+    this.requestRender()
   }
 
   public get x(): number {
-    if (this.parent && this._positionType === "relative") {
+    if (this.parent) {
       return this.parent.x + this._x + this._translateX
     }
     return this._x + this._translateX
@@ -526,7 +542,7 @@ export abstract class Renderable extends BaseRenderable {
   }
 
   public get y(): number {
-    if (this.parent && this._positionType === "relative") {
+    if (this.parent) {
       return this.parent.y + this._y + this._translateY
     }
     return this._y + this._translateY
@@ -580,6 +596,7 @@ export abstract class Renderable extends BaseRenderable {
     if (this._zIndex !== value) {
       this._zIndex = value
       this.parent?.requestZIndexSort()
+      this.requestRender()
     }
   }
 
@@ -649,21 +666,11 @@ export abstract class Renderable extends BaseRenderable {
       node.setFlexShrink(this._flexShrink)
     }
 
-    if (options.flexDirection !== undefined) {
-      node.setFlexDirection(parseFlexDirection(options.flexDirection))
-    }
-    if (options.flexWrap !== undefined) {
-      node.setFlexWrap(parseWrap(options.flexWrap))
-    }
-    if (options.alignItems !== undefined) {
-      node.setAlignItems(parseAlign(options.alignItems))
-    }
-    if (options.justifyContent !== undefined) {
-      node.setJustifyContent(parseJustify(options.justifyContent))
-    }
-    if (options.alignSelf !== undefined) {
-      node.setAlignSelf(parseAlign(options.alignSelf))
-    }
+    node.setFlexDirection(parseFlexDirection(options.flexDirection))
+    node.setFlexWrap(parseWrap(options.flexWrap))
+    node.setAlignItems(parseAlignItems(options.alignItems))
+    node.setJustifyContent(parseJustify(options.justifyContent))
+    node.setAlignSelf(parseAlign(options.alignSelf))
 
     if (isDimensionType(options.width)) {
       this._width = options.width
@@ -841,7 +848,7 @@ export abstract class Renderable extends BaseRenderable {
   }
 
   public set alignItems(alignItems: AlignString | null | undefined) {
-    this.yogaNode.setAlignItems(parseAlign(alignItems))
+    this.yogaNode.setAlignItems(parseAlignItems(alignItems))
     this.requestRender()
   }
 
@@ -977,13 +984,15 @@ export abstract class Renderable extends BaseRenderable {
 
     const oldX = this._x
     const oldY = this._y
+    const oldWidth = this._widthValue
+    const oldHeight = this._heightValue
 
     this._x = layout.left
     this._y = layout.top
 
     const newWidth = Math.max(layout.width, 1)
     const newHeight = Math.max(layout.height, 1)
-    const sizeChanged = this.width !== newWidth || this.height !== newHeight
+    const sizeChanged = oldWidth !== newWidth || oldHeight !== newHeight
 
     this._widthValue = newWidth
     this._heightValue = newHeight
@@ -992,7 +1001,8 @@ export abstract class Renderable extends BaseRenderable {
       this.onLayoutResize(newWidth, newHeight)
     }
 
-    if (oldX !== this._x || oldY !== this._y) {
+    const positionChanged = oldX !== this._x || oldY !== this._y
+    if (positionChanged) {
       if (this.parent) this.parent.childrenPrimarySortDirty = true
     }
   }
@@ -1264,6 +1274,12 @@ export abstract class Renderable extends BaseRenderable {
     // Check again after updateFromLayout, which calls onResize/onSizeChange
     if (this._isDestroyed) return
 
+    // Push opacity BEFORE rendering this element so it affects this element and all children
+    const shouldPushOpacity = this._opacity < 1.0
+    if (shouldPushOpacity) {
+      renderList.push({ action: "pushOpacity", opacity: this._opacity })
+    }
+
     renderList.push({ action: "render", renderable: this })
 
     this.ensureZIndexSorted()
@@ -1277,6 +1293,8 @@ export abstract class Renderable extends BaseRenderable {
         y: scissorRect.y,
         width: scissorRect.width,
         height: scissorRect.height,
+        screenX: this.x,
+        screenY: this.y,
       })
     }
     const visibleChildren = this._getVisibleChildren()
@@ -1290,6 +1308,9 @@ export abstract class Renderable extends BaseRenderable {
 
     if (shouldPushScissor) {
       renderList.push({ action: "popScissorRect" })
+    }
+    if (shouldPushOpacity) {
+      renderList.push({ action: "popOpacity" })
     }
   }
 
@@ -1500,7 +1521,7 @@ export abstract class Renderable extends BaseRenderable {
 }
 
 interface RenderCommandBase {
-  action: "render" | "pushScissorRect" | "popScissorRect"
+  action: "render" | "pushScissorRect" | "popScissorRect" | "pushOpacity" | "popOpacity"
 }
 
 interface RenderCommandPushScissorRect extends RenderCommandBase {
@@ -1509,6 +1530,8 @@ interface RenderCommandPushScissorRect extends RenderCommandBase {
   y: number
   width: number
   height: number
+  screenX: number
+  screenY: number
 }
 
 interface RenderCommandPopScissorRect extends RenderCommandBase {
@@ -1520,7 +1543,21 @@ interface RenderCommandRender extends RenderCommandBase {
   renderable: Renderable
 }
 
-export type RenderCommand = RenderCommandPushScissorRect | RenderCommandPopScissorRect | RenderCommandRender
+interface RenderCommandPushOpacity extends RenderCommandBase {
+  action: "pushOpacity"
+  opacity: number
+}
+
+interface RenderCommandPopOpacity extends RenderCommandBase {
+  action: "popOpacity"
+}
+
+export type RenderCommand =
+  | RenderCommandPushScissorRect
+  | RenderCommandPopScissorRect
+  | RenderCommandRender
+  | RenderCommandPushOpacity
+  | RenderCommandPopOpacity
 
 export class RootRenderable extends Renderable {
   private renderList: RenderCommand[] = []
@@ -1565,6 +1602,7 @@ export class RootRenderable extends Renderable {
     this.updateLayout(deltaTime, this.renderList)
 
     // 3. Render all collected renderables
+    this._ctx.clearHitGridScissorRects()
     for (let i = 1; i < this.renderList.length; i++) {
       const command = this.renderList[i]
       switch (command.action) {
@@ -1576,9 +1614,17 @@ export class RootRenderable extends Renderable {
           break
         case "pushScissorRect":
           buffer.pushScissorRect(command.x, command.y, command.width, command.height)
+          this._ctx.pushHitGridScissorRect(command.screenX, command.screenY, command.width, command.height)
           break
         case "popScissorRect":
           buffer.popScissorRect()
+          this._ctx.popHitGridScissorRect()
+          break
+        case "pushOpacity":
+          buffer.pushOpacity(command.opacity)
+          break
+        case "popOpacity":
+          buffer.popOpacity()
           break
       }
     }

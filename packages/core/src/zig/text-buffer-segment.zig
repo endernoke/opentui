@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const rope_mod = @import("rope.zig");
 const buffer = @import("buffer.zig");
+const mem_registry_mod = @import("mem-registry.zig");
 
 const gp = @import("grapheme.zig");
 
@@ -18,6 +19,8 @@ pub const TextBufferError = error{
     InvalidMemId,
 };
 
+const MemRegistry = mem_registry_mod.MemRegistry;
+
 pub const WrapMode = enum {
     none,
     char,
@@ -31,69 +34,6 @@ pub const ChunkFitResult = struct {
 
 pub const GraphemeInfo = utf8.GraphemeInfo;
 
-/// Memory buffer reference in the registry
-pub const MemBuffer = struct {
-    data: []const u8,
-    owned: bool,
-};
-
-/// Registry for multiple memory buffers
-pub const MemRegistry = struct {
-    buffers: std.ArrayListUnmanaged(MemBuffer),
-    allocator: Allocator,
-
-    pub fn init(allocator: Allocator) MemRegistry {
-        return .{
-            .buffers = .{},
-            .allocator = allocator,
-        };
-    }
-
-    pub fn deinit(self: *MemRegistry) void {
-        for (self.buffers.items) |mem_buf| {
-            if (mem_buf.owned) {
-                self.allocator.free(mem_buf.data);
-            }
-        }
-        self.buffers.deinit(self.allocator);
-    }
-
-    pub fn register(self: *MemRegistry, data: []const u8, owned: bool) TextBufferError!u8 {
-        if (self.buffers.items.len >= 255) {
-            return TextBufferError.OutOfMemory;
-        }
-        const id: u8 = @intCast(self.buffers.items.len);
-        try self.buffers.append(self.allocator, MemBuffer{
-            .data = data,
-            .owned = owned,
-        });
-        return id;
-    }
-
-    pub fn get(self: *const MemRegistry, id: u8) ?[]const u8 {
-        if (id >= self.buffers.items.len) return null;
-        return self.buffers.items[id].data;
-    }
-
-    pub fn replace(self: *MemRegistry, id: u8, data: []const u8, owned: bool) TextBufferError!void {
-        if (id >= self.buffers.items.len) return TextBufferError.InvalidMemId;
-        const prev = self.buffers.items[id];
-        if (prev.owned) {
-            self.allocator.free(prev.data);
-        }
-        self.buffers.items[id] = .{ .data = data, .owned = owned };
-    }
-
-    pub fn clear(self: *MemRegistry) void {
-        for (self.buffers.items) |mem_buf| {
-            if (mem_buf.owned) {
-                self.allocator.free(mem_buf.data);
-            }
-        }
-        self.buffers.clearRetainingCapacity();
-    }
-};
-
 /// A chunk represents a contiguous sequence of UTF-8 bytes from a specific memory buffer
 pub const TextChunk = struct {
     mem_id: u8,
@@ -105,7 +45,7 @@ pub const TextChunk = struct {
     wrap_offsets: ?[]utf8.WrapBreak = null,
 
     pub const Flags = struct {
-        pub const ASCII_ONLY: u8 = 0b00000001;
+        pub const ASCII_ONLY: u8 = 0b00000001; // Printable ASCII only (32..126).
     };
 
     pub fn isAsciiOnly(self: *const TextChunk) bool {
@@ -154,13 +94,13 @@ pub const TextChunk = struct {
 
         const chunk_bytes = self.getBytes(mem_registry);
 
-        var grapheme_list = std.ArrayList(GraphemeInfo).init(allocator);
-        errdefer grapheme_list.deinit();
+        var grapheme_list: std.ArrayListUnmanaged(GraphemeInfo) = .{};
+        errdefer grapheme_list.deinit(allocator);
 
-        try utf8.findGraphemeInfo(chunk_bytes, tabwidth, self.isAsciiOnly(), width_method, &grapheme_list);
+        try utf8.findGraphemeInfo(chunk_bytes, tabwidth, self.isAsciiOnly(), width_method, allocator, &grapheme_list);
 
         // TODO: Calling this with an arena allocator will just double the memory usage?
-        const graphemes = try grapheme_list.toOwnedSlice();
+        const graphemes = try grapheme_list.toOwnedSlice(allocator);
 
         mut_self.graphemes = graphemes;
         return graphemes;
@@ -181,12 +121,13 @@ pub const TextChunk = struct {
 
         const chunk_bytes = self.getBytes(mem_registry);
         var wrap_result = utf8.WrapBreakResult.init(allocator);
-        defer wrap_result.deinit();
+        errdefer wrap_result.deinit();
 
         try utf8.findWrapBreaks(chunk_bytes, &wrap_result, width_method);
 
         // TODO: Do not cache for chunks < 64 bytes, as it does not profit from the cache
-        const wrap_offsets = try allocator.dupe(utf8.WrapBreak, wrap_result.breaks.items);
+        // Use toOwnedSlice to transfer ownership without copying
+        const wrap_offsets = try wrap_result.breaks.toOwnedSlice(allocator);
         mut_self.wrap_offsets = wrap_offsets;
 
         return wrap_offsets;

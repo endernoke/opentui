@@ -53,7 +53,7 @@ export class OptimizedBuffer {
     char: Uint32Array
     fg: Float32Array
     bg: Float32Array
-    attributes: Uint8Array
+    attributes: Uint32Array
   } | null = null
   private _destroyed: boolean = false
 
@@ -72,7 +72,7 @@ export class OptimizedBuffer {
     char: Uint32Array
     fg: Float32Array
     bg: Float32Array
-    attributes: Uint8Array
+    attributes: Uint32Array
   } {
     this.guard()
     if (this._rawBuffers === null) {
@@ -86,7 +86,7 @@ export class OptimizedBuffer {
         char: new Uint32Array(toArrayBuffer(charPtr, 0, size * 4)),
         fg: new Float32Array(toArrayBuffer(fgPtr, 0, size * 4 * 4)),
         bg: new Float32Array(toArrayBuffer(bgPtr, 0, size * 4 * 4)),
-        attributes: new Uint8Array(toArrayBuffer(attributesPtr, 0, size)),
+        attributes: new Uint32Array(toArrayBuffer(attributesPtr, 0, size * 4)),
       }
     }
 
@@ -351,6 +351,26 @@ export class OptimizedBuffer {
   public clearScissorRects(): void {
     this.guard()
     this.lib.bufferClearScissorRects(this.bufferPtr)
+  }
+
+  public pushOpacity(opacity: number): void {
+    this.guard()
+    this.lib.bufferPushOpacity(this.bufferPtr, Math.max(0, Math.min(1, opacity)))
+  }
+
+  public popOpacity(): void {
+    this.guard()
+    this.lib.bufferPopOpacity(this.bufferPtr)
+  }
+
+  public getCurrentOpacity(): number {
+    this.guard()
+    return this.lib.bufferGetCurrentOpacity(this.bufferPtr)
+  }
+
+  public clearOpacity(): void {
+    this.guard()
+    this.lib.bufferClearOpacity(this.bufferPtr)
   }
 
   public encodeUnicode(text: string): { ptr: Pointer; data: Array<{ width: number; char: number }> } | null {
