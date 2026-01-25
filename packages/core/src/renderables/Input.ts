@@ -71,6 +71,8 @@ export class InputRenderable extends TextareaRenderable {
         { name: "linefeed", action: "submit" },
         ...(options.keyBindings || []),
       ],
+      // Set default accessibility role
+      accessibilityRole: options.accessibilityRole ?? "textbox",
     })
 
     this._maxLength = maxLength
@@ -126,6 +128,8 @@ export class InputRenderable extends TextareaRenderable {
       this.setText(newValue)
       this.cursorOffset = newValue.length
       this.emit(InputRenderableEvents.INPUT, newValue)
+      // Update accessibility value
+      this.accessibilityValue = newValue
     }
   }
 

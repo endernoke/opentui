@@ -107,7 +107,7 @@ export class SelectRenderable extends Renderable {
   } satisfies Partial<SelectRenderableOptions>
 
   constructor(ctx: RenderContext, options: SelectRenderableOptions) {
-    super(ctx, { ...options, buffered: true })
+    super(ctx, { ...options, buffered: true, accessibilityRole: options.accessibilityRole ?? "list" })
     this._options = options.options || []
     const requestedIndex = options.selectedIndex ?? this._defaultOptions.selectedIndex
     this._selectedIndex = this._options.length > 0 ? Math.min(requestedIndex, this._options.length - 1) : 0

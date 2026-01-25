@@ -168,6 +168,8 @@ export class TextareaRenderable extends EditBufferRenderable {
       ...options,
       backgroundColor: options.backgroundColor || defaults.backgroundColor,
       textColor: options.textColor || defaults.textColor,
+      // Set default accessibility role
+      accessibilityRole: options.accessibilityRole ?? "textbox",
     }
     super(ctx, baseOptions)
 

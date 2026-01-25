@@ -24,7 +24,7 @@ export class TextRenderable extends TextBufferRenderable {
   } satisfies Partial<TextOptions>
 
   constructor(ctx: RenderContext, options: TextOptions) {
-    super(ctx, options)
+    super(ctx, {...options, accessibilityRole: options.accessibilityRole ?? "paragraph" })
 
     const content = options.content ?? this._contentDefaultOptions.content
     const styledText = typeof content === "string" ? stringToStyledText(content) : content

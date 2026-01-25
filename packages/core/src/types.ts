@@ -3,6 +3,7 @@ import type { EventEmitter } from "events"
 import type { Selection } from "./lib/selection"
 import type { Renderable } from "./Renderable"
 import type { InternalKeyHandler, KeyHandler } from "./lib/KeyHandler"
+import type { AccessibilityManager } from "./lib/AccessibilityManager"
 
 export const TextAttributes = {
   NONE: 0,
@@ -57,6 +58,7 @@ export interface RenderContext extends EventEmitter {
   pushHitGridScissorRect: (x: number, y: number, width: number, height: number) => void
   popHitGridScissorRect: () => void
   clearHitGridScissorRects: () => void
+  root: Renderable
   width: number
   height: number
   requestRender: () => void
@@ -80,6 +82,8 @@ export interface RenderContext extends EventEmitter {
   clearSelection: () => void
   startSelection: (renderable: Renderable, x: number, y: number) => void
   updateSelection: (currentRenderable: Renderable | undefined, x: number, y: number) => void
+  accessibility?: AccessibilityManager
+  getRenderableById: (id: string) => Renderable | undefined
 }
 
 export type Timeout = ReturnType<typeof setTimeout> | undefined

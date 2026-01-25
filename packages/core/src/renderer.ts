@@ -32,6 +32,7 @@ import {
   isPixelResolutionResponse,
   parsePixelResolution,
 } from "./lib/terminal-capability-detection"
+import { AccessibilityManager } from "./lib/AccessibilityManager"
 
 registerEnvVar({
   name: "OTUI_DUMP_CAPTURES",
@@ -99,6 +100,9 @@ export interface CliRendererConfig {
   openConsoleOnError?: boolean
   prependInputHandlers?: ((sequence: string) => boolean)[]
   onDestroy?: () => void
+  accessibility?: {
+    enabled?: boolean
+  }
 }
 
 export type PixelResolution = {
@@ -433,6 +437,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private _debugInputs: Array<{ timestamp: string; sequence: string }> = []
   private _debugModeEnabled: boolean = env.OTUI_DEBUG
 
+  public accessibility?: AccessibilityManager
+
   private handleError: (error: Error) => void = ((error: Error) => {
     console.error(error)
 
@@ -540,6 +546,12 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.prependedInputHandlers = config.prependInputHandlers || []
 
     this.root = new RootRenderable(this)
+
+    // Initialize accessibility if enabled
+    if (config.accessibility?.enabled) {
+      this.accessibility = new AccessibilityManager(this)
+      this.accessibility.setEnabled(true)
+    }
 
     if (this.memorySnapshotInterval > 0) {
       this.startMemorySnapshotTimer()
@@ -655,6 +667,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     }
 
     this._currentFocusedRenderable = renderable
+    this.accessibility?.notifyFocusChanged(renderable.id)
   }
 
   private setCapturedRenderable(renderable: Renderable | undefined): void {
@@ -1933,6 +1946,21 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     if (!enabled) {
       this.frameTimes = []
     }
+  }
+
+  public getRenderableById(id: string): Renderable | undefined {
+    return this.root.getRenderable(id)
+  }
+
+  public enableAccessibility(): void {
+    if (!this.accessibility) {
+      this.accessibility = new AccessibilityManager(this)
+    }
+    this.accessibility.setEnabled(true)
+  }
+
+  public disableAccessibility(): void {
+    this.accessibility?.setEnabled(false)
   }
 
   public getSelection(): Selection | null {

@@ -48,6 +48,59 @@ export enum RenderableEvents {
   BLURRED = "blurred",
 }
 
+export type AccessibilityRole =
+  | "none"
+  | "button"
+  | "textbox"
+  | "checkbox"
+  | "radio"
+  | "combobox"
+  | "list"
+  | "listItem"
+  | "menu"
+  | "menuItem"
+  | "menuBar"
+  | "tab"
+  | "tabList"
+  | "dialog"
+  | "alert"
+  | "progressbar"
+  | "slider"
+  | "scrollbar"
+  | "separator"
+  | "group"
+  | "image"
+  | "link"
+  | "heading"
+  | "paragraph"
+  | "region"
+
+export interface AccessibilityState {
+  checked?: boolean | "mixed" // For checkboxes/radios
+  selected?: boolean // For list items
+  expanded?: boolean // For expandable elements
+  disabled?: boolean // For disabled controls
+  readonly?: boolean // For readonly inputs
+  required?: boolean // For required form fields
+  invalid?: boolean // For validation errors
+  pressed?: boolean // For toggle buttons
+}
+
+export interface AccessibilityOptions {
+  accessibilityRole?: AccessibilityRole
+  accessibilityLabel?: string // Human-readable name
+  accessibilityValue?: string // Current value (for inputs, sliders)
+  accessibilityHint?: string // Usage hint (e.g., "Press Enter to submit")
+  accessibilityDescription?: string // Longer description
+  accessibilityHidden?: boolean // Hide from screen readers
+  accessibilityLive?: "off" | "polite" | "assertive" // Live region behavior
+  accessibilityState?: AccessibilityState
+  accessibilityLevel?: number // For headings (h1-h6)
+  accessibilityMin?: number // For sliders/progress bars
+  accessibilityMax?: number // For sliders/progress bars
+  accessibilityOrientation?: "horizontal" | "vertical"
+}
+
 export interface Position {
   top?: number | "auto" | `${number}%`
   right?: number | "auto" | `${number}%`
@@ -91,7 +144,9 @@ export interface LayoutOptions extends BaseRenderableOptions {
   enableLayout?: boolean
 }
 
-export interface RenderableOptions<T extends BaseRenderable = BaseRenderable> extends Partial<LayoutOptions> {
+export interface RenderableOptions<T extends BaseRenderable = BaseRenderable>
+  extends Partial<LayoutOptions>,
+    AccessibilityOptions {
   width?: number | "auto" | `${number}%`
   height?: number | "auto" | `${number}%`
   zIndex?: number
@@ -235,6 +290,20 @@ export abstract class Renderable extends BaseRenderable {
   protected _opacity: number = 1.0
   private _flexShrink: number = 1
 
+  // Accessibility properties
+  protected _accessibilityRole: AccessibilityRole = "none"
+  protected _accessibilityLabel?: string
+  protected _accessibilityValue?: string
+  protected _accessibilityHint?: string
+  protected _accessibilityDescription?: string
+  protected _accessibilityHidden: boolean = false
+  protected _accessibilityLive: "off" | "polite" | "assertive" = "off"
+  protected _accessibilityState: AccessibilityState = {}
+  protected _accessibilityLevel?: number
+  protected _accessibilityMin?: number
+  protected _accessibilityMax?: number
+  protected _accessibilityOrientation?: "horizontal" | "vertical"
+
   private renderableMapById: Map<string, Renderable> = new Map()
   protected _childrenInLayoutOrder: Renderable[] = []
   protected _childrenInZIndexOrder: Renderable[] = []
@@ -278,6 +347,20 @@ export abstract class Renderable extends BaseRenderable {
     this._liveCount = this._live && this._visible ? 1 : 0
     this._opacity = options.opacity !== undefined ? Math.max(0, Math.min(1, options.opacity)) : 1.0
 
+    // Initialize accessibility options
+    this._accessibilityRole = options.accessibilityRole ?? "none"
+    this._accessibilityLabel = options.accessibilityLabel
+    this._accessibilityValue = options.accessibilityValue
+    this._accessibilityHint = options.accessibilityHint
+    this._accessibilityDescription = options.accessibilityDescription
+    this._accessibilityHidden = options.accessibilityHidden ?? false
+    this._accessibilityLive = options.accessibilityLive ?? "off"
+    this._accessibilityState = options.accessibilityState ?? {}
+    this._accessibilityLevel = options.accessibilityLevel
+    this._accessibilityMin = options.accessibilityMin
+    this._accessibilityMax = options.accessibilityMax
+    this._accessibilityOrientation = options.accessibilityOrientation
+
     // TODO: use a global yoga config
     this.yogaNode = Yoga.Node.create(yogaConfig)
     this.yogaNode.setDisplay(this._visible ? Display.Flex : Display.None)
@@ -288,6 +371,9 @@ export abstract class Renderable extends BaseRenderable {
     if (this.buffered) {
       this.createFrameBuffer()
     }
+
+    // Register with accessibility manager if enabled
+    this._ctx.accessibility?.addNode(this)
   }
 
   public override get id() {
@@ -418,6 +504,12 @@ export abstract class Renderable extends BaseRenderable {
       this.pasteHandler = null
     }
 
+    // Notify accessibility manager that focus was cleared
+    // Only notify if this renderable was actually the focused one
+    if (this.ctx.currentFocusedRenderable === this) {
+      this.ctx.accessibility?.notifyFocusChanged(undefined)
+    }
+
     this.emit(RenderableEvents.BLURRED)
   }
 
@@ -447,6 +539,143 @@ export abstract class Renderable extends BaseRenderable {
   protected propagateLiveCount(delta: number): void {
     this._liveCount += delta
     this.parent?.propagateLiveCount(delta)
+  }
+
+  // Accessibility getters and setters
+  public get accessibilityRole(): AccessibilityRole {
+    return this._accessibilityRole
+  }
+
+  public set accessibilityRole(value: AccessibilityRole) {
+    if (this._accessibilityRole !== value) {
+      this._accessibilityRole = value
+      this.onAccessibilityChange("role")
+    }
+  }
+
+  public get accessibilityLabel(): string | undefined {
+    return this._accessibilityLabel
+  }
+
+  public set accessibilityLabel(value: string | undefined) {
+    if (this._accessibilityLabel !== value) {
+      this._accessibilityLabel = value
+      this.onAccessibilityChange("label")
+    }
+  }
+
+  public get accessibilityValue(): string | undefined {
+    return this._accessibilityValue
+  }
+
+  public set accessibilityValue(value: string | undefined) {
+    if (this._accessibilityValue !== value) {
+      this._accessibilityValue = value
+      this.onAccessibilityChange("value")
+    }
+  }
+
+  public get accessibilityHint(): string | undefined {
+    return this._accessibilityHint
+  }
+
+  public set accessibilityHint(value: string | undefined) {
+    if (this._accessibilityHint !== value) {
+      this._accessibilityHint = value
+      this.onAccessibilityChange("hint")
+    }
+  }
+
+  public get accessibilityDescription(): string | undefined {
+    return this._accessibilityDescription
+  }
+
+  public set accessibilityDescription(value: string | undefined) {
+    if (this._accessibilityDescription !== value) {
+      this._accessibilityDescription = value
+      this.onAccessibilityChange("description")
+    }
+  }
+
+  public get accessibilityHidden(): boolean {
+    return this._accessibilityHidden
+  }
+
+  public set accessibilityHidden(value: boolean) {
+    if (this._accessibilityHidden !== value) {
+      this._accessibilityHidden = value
+      this.onAccessibilityChange("hidden")
+    }
+  }
+
+  public get accessibilityLive(): "off" | "polite" | "assertive" {
+    return this._accessibilityLive
+  }
+
+  public set accessibilityLive(value: "off" | "polite" | "assertive") {
+    if (this._accessibilityLive !== value) {
+      this._accessibilityLive = value
+      this.onAccessibilityChange("live")
+    }
+  }
+
+  public get accessibilityState(): AccessibilityState {
+    return this._accessibilityState
+  }
+
+  public set accessibilityState(value: AccessibilityState) {
+    this._accessibilityState = value
+    this.onAccessibilityChange("state")
+  }
+
+  public get accessibilityLevel(): number | undefined {
+    return this._accessibilityLevel
+  }
+
+  public set accessibilityLevel(value: number | undefined) {
+    if (this._accessibilityLevel !== value) {
+      this._accessibilityLevel = value
+      this.onAccessibilityChange("level")
+    }
+  }
+
+  public get accessibilityMin(): number | undefined {
+    return this._accessibilityMin
+  }
+
+  public set accessibilityMin(value: number | undefined) {
+    if (this._accessibilityMin !== value) {
+      this._accessibilityMin = value
+      this.onAccessibilityChange("min")
+    }
+  }
+
+  public get accessibilityMax(): number | undefined {
+    return this._accessibilityMax
+  }
+
+  public set accessibilityMax(value: number | undefined) {
+    if (this._accessibilityMax !== value) {
+      this._accessibilityMax = value
+      this.onAccessibilityChange("max")
+    }
+  }
+
+  public get accessibilityOrientation(): "horizontal" | "vertical" | undefined {
+    return this._accessibilityOrientation
+  }
+
+  public set accessibilityOrientation(value: "horizontal" | "vertical" | undefined) {
+    if (this._accessibilityOrientation !== value) {
+      this._accessibilityOrientation = value
+      this.onAccessibilityChange("orientation")
+    }
+  }
+
+  protected onAccessibilityChange(property: string): void {
+    // Hook for subclasses and accessibility manager integration
+    // Will be used to notify platform accessibility APIs of changes
+    this._ctx.accessibility?.notifyPropertyChanged(this, property)
   }
 
   public handleKeyPress?(key: KeyEvent): boolean
@@ -1114,6 +1343,12 @@ export abstract class Renderable extends BaseRenderable {
     this.childrenPrimarySortDirty = true
     this._shouldUpdateBefore.add(renderable)
 
+    // Update accessibility tree structure
+    this._ctx.accessibility?.updateNodeChildren(this)
+    // Update the child's accessibility node to ensure all properties (like focusable)
+    // are captured after the child class initialization has completed
+    this._ctx.accessibility?.updateNode(renderable)
+
     this.requestRender()
 
     return insertedIndex
@@ -1400,6 +1635,9 @@ export abstract class Renderable extends BaseRenderable {
 
     this.blur()
     this.removeAllListeners()
+
+    // Remove from accessibility manager if enabled
+    this._ctx.accessibility?.removeNode(this.id)
 
     this.destroySelf()
 

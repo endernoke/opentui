@@ -65,6 +65,11 @@ export class BoxRenderable extends Renderable {
   constructor(ctx: RenderContext, options: BoxOptions) {
     super(ctx, options)
 
+    // Set default accessibility role if not specified
+    if (!options.accessibilityRole) {
+      this._accessibilityRole = "group"
+    }
+
     this._backgroundColor = parseColor(options.backgroundColor || this._defaultOptions.backgroundColor)
     this._border = options.border ?? this._defaultOptions.border
     if (

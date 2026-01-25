@@ -95,9 +95,17 @@ export class TabSelectRenderable extends Renderable {
   private _keyBindings: TabSelectKeyBinding[]
 
   constructor(ctx: RenderContext, options: TabSelectRenderableOptions) {
-    const calculatedHeight = calculateDynamicHeight(options.showUnderline ?? true, options.showDescription ?? true)
+    const showDescription = options.showDescription ?? true
+    const showUnderline = options.showUnderline ?? true
+    const calculatedHeight = calculateDynamicHeight(showUnderline, showDescription)
+    const height = options.height || calculatedHeight
 
-    super(ctx, { ...options, height: calculatedHeight, buffered: true })
+    super(ctx, {
+      ...options,
+      height,
+      buffered: true,
+      accessibilityRole: options.accessibilityRole ?? "tabList",
+    })
 
     this._backgroundColor = parseColor(options.backgroundColor || "transparent")
     this._textColor = parseColor(options.textColor || "#FFFFFF")
