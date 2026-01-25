@@ -17,6 +17,10 @@ const logger = @import("logger.zig");
 const event_bus = @import("event-bus.zig");
 const utils = @import("utils.zig");
 
+// Accessibility modules
+const accessibility_bridge = @import("accessibility/bridge.zig");
+const accessibility_types = @import("accessibility/types.zig");
+
 pub const OptimizedBuffer = buffer.OptimizedBuffer;
 pub const CliRenderer = renderer.CliRenderer;
 pub const Terminal = terminal.Terminal;
@@ -1613,4 +1617,67 @@ export fn bufferDrawChar(
     const rgbaFg = utils.f32PtrToRGBA(fg);
     const rgbaBg = utils.f32PtrToRGBA(bg);
     bufferPtr.drawChar(char, x, y, rgbaFg, rgbaBg, attributes) catch {};
+}
+
+// ============================================================================
+// Accessibility API
+// ============================================================================
+
+pub const AccessibilityBridge = accessibility_bridge.AccessibilityBridge;
+pub const AccessibilityNodeData = accessibility_types.NodeData;
+
+export fn accessibilityCreateBridge() ?*AccessibilityBridge {
+    return accessibility_bridge.accessibilityCreateBridge();
+}
+
+export fn accessibilityDestroyBridge(bridge: *AccessibilityBridge) void {
+    accessibility_bridge.accessibilityDestroyBridge(bridge);
+}
+
+export fn accessibilitySetEnabled(bridge: *AccessibilityBridge, enabled: bool) void {
+    accessibility_bridge.accessibilitySetEnabled(bridge, enabled);
+}
+
+export fn accessibilityIsEnabled(bridge: *AccessibilityBridge) bool {
+    return accessibility_bridge.accessibilityIsEnabled(bridge);
+}
+
+export fn accessibilityUpsertNode(bridge: *AccessibilityBridge, data: *const AccessibilityNodeData) bool {
+    return accessibility_bridge.accessibilityUpsertNode(bridge, data);
+}
+
+export fn accessibilityRemoveNode(bridge: *AccessibilityBridge, id_ptr: [*]const u8, id_len: usize) bool {
+    return accessibility_bridge.accessibilityRemoveNode(bridge, id_ptr, id_len);
+}
+
+export fn accessibilitySetFocus(bridge: *AccessibilityBridge, id_ptr: ?[*]const u8, id_len: usize) bool {
+    return accessibility_bridge.accessibilitySetFocus(bridge, id_ptr, id_len);
+}
+
+export fn accessibilityAnnounce(bridge: *AccessibilityBridge, message_ptr: [*]const u8, message_len: usize, priority: u8) bool {
+    return accessibility_bridge.accessibilityAnnounce(bridge, message_ptr, message_len, priority);
+}
+
+export fn accessibilityNotifyPropertyChanged(bridge: *AccessibilityBridge, id_ptr: [*]const u8, id_len: usize, property: u32) bool {
+    return accessibility_bridge.accessibilityNotifyPropertyChanged(bridge, id_ptr, id_len, property);
+}
+
+export fn accessibilitySetActionCallback(bridge: *AccessibilityBridge, callback: ?accessibility_types.ActionCallback) void {
+    accessibility_bridge.accessibilitySetActionCallback(bridge, callback);
+}
+
+export fn accessibilityGetNodeCount(bridge: *AccessibilityBridge) usize {
+    return accessibility_bridge.accessibilityGetNodeCount(bridge);
+}
+
+export fn accessibilityClear(bridge: *AccessibilityBridge) void {
+    accessibility_bridge.accessibilityClear(bridge);
+}
+
+export fn accessibilityIsPlatformSupported() bool {
+    return accessibility_bridge.accessibilityIsPlatformSupported();
+}
+
+export fn accessibilityGetPlatformName(out_ptr: [*]u8, max_len: usize) usize {
+    return accessibility_bridge.accessibilityGetPlatformName(out_ptr, max_len);
 }

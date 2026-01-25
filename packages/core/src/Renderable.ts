@@ -84,6 +84,9 @@ export interface AccessibilityState {
   required?: boolean // For required form fields
   invalid?: boolean // For validation errors
   pressed?: boolean // For toggle buttons
+  busy?: boolean // For async operations in progress
+  modal?: boolean // For modal dialogs
+  multiselectable?: boolean // For multi-select lists
 }
 
 export interface AccessibilityOptions {

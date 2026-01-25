@@ -18,6 +18,7 @@ import {
   LineInfoStruct,
   MeasureResultStruct,
   CursorStateStruct,
+  AccessibilityNodeDataStruct,
 } from "./zig-structs"
 import { isBunfsPath } from "./lib/bunfs"
 import { attributesWithLink } from "./utils"
@@ -1005,6 +1006,64 @@ function getOpenTUILib(libPath?: string) {
       args: ["ptr", "u32", "u32", "u32", "ptr", "ptr", "u32"],
       returns: "void",
     },
+
+    // Accessibility API
+    accessibilityCreateBridge: {
+      args: [],
+      returns: "ptr",
+    },
+    accessibilityDestroyBridge: {
+      args: ["ptr"],
+      returns: "void",
+    },
+    accessibilitySetEnabled: {
+      args: ["ptr", "bool"],
+      returns: "void",
+    },
+    accessibilityIsEnabled: {
+      args: ["ptr"],
+      returns: "bool",
+    },
+    accessibilityUpsertNode: {
+      args: ["ptr", "ptr"],
+      returns: "bool",
+    },
+    accessibilityRemoveNode: {
+      args: ["ptr", "ptr", "usize"],
+      returns: "bool",
+    },
+    accessibilitySetFocus: {
+      args: ["ptr", "ptr", "usize"],
+      returns: "bool",
+    },
+    accessibilityAnnounce: {
+      args: ["ptr", "ptr", "usize", "u8"],
+      returns: "bool",
+    },
+    accessibilityNotifyPropertyChanged: {
+      args: ["ptr", "ptr", "usize", "u32"],
+      returns: "bool",
+    },
+    accessibilitySetActionCallback: {
+      args: ["ptr", "ptr"],
+      returns: "void",
+    },
+    accessibilityGetNodeCount: {
+      args: ["ptr"],
+      returns: "usize",
+    },
+    accessibilityClear: {
+      args: ["ptr"],
+      returns: "void",
+    },
+    accessibilityIsPlatformSupported: {
+      args: [],
+      returns: "bool",
+    },
+    accessibilityGetPlatformName: {
+      args: ["ptr", "usize"],
+      returns: "usize",
+    },
   })
 
   if (env.OTUI_DEBUG_FFI || env.OTUI_TRACE_FFI) {
@@ -1257,6 +1316,108 @@ export interface CursorState {
   blinking: boolean
   color: RGBA
 }
+
+// Accessibility types for FFI (internal use - uses snake_case to match Zig enums)
+// For public API, use AccessibilityRole from Renderable.ts
+export type FFIAccessibilityRole =
+  | "none"
+  | "button"
+  | "checkbox"
+  | "textbox"
+  | "radio"
+  | "combobox"
+  | "list"
+  | "list_item"
+  | "menu"
+  | "menu_item"
+  | "menu_bar"
+  | "tab"
+  | "tab_list"
+  | "tab_panel"
+  | "dialog"
+  | "alert"
+  | "progressbar"
+  | "slider"
+  | "scrollbar"
+  | "separator"
+  | "group"
+  | "image"
+  | "link"
+  | "heading"
+  | "paragraph"
+  | "region"
+  | "application"
+  | "window"
+  | "tree"
+  | "tree_item"
+  | "grid"
+  | "grid_cell"
+  | "row"
+  | "column_header"
+  | "row_header"
+  | "tooltip"
+  | "status"
+  | "toolbar"
+  | "search"
+  | "form"
+  | "article"
+  | "document"
+  | "custom"
+
+export type AccessibilityProperty =
+  | "name"
+  | "value"
+  | "description"
+  | "role"
+  | "state"
+  | "bounds"
+  | "hint"
+  | "level"
+  | "min_value"
+  | "max_value"
+  | "current_value"
+
+export interface AccessibilityStateFlags {
+  checked?: boolean
+  selected?: boolean
+  expanded?: boolean
+  disabled?: boolean
+  readonly?: boolean
+  required?: boolean
+  invalid?: boolean
+  pressed?: boolean
+  focusable?: boolean
+  focused?: boolean
+  hidden?: boolean
+  busy?: boolean
+  modal?: boolean
+  multiselectable?: boolean
+}
+
+export interface AccessibilityNodeData {
+  id: string
+  role: FFIAccessibilityRole
+  name?: string
+  value?: string
+  description?: string
+  hint?: string
+  rect: { x: number; y: number; width: number; height: number }
+  state: AccessibilityStateFlags
+  parentId?: string
+  childCount: number
+  liveSetting: "off" | "polite" | "assertive"
+  orientation: "horizontal" | "vertical"
+  level: number
+  minValue?: number
+  maxValue?: number
+  currentValue?: number
+}
+
+export type AccessibilityActionCallback = (
+  nodeId: string,
+  action: "invoke" | "focus" | "set_value" | "toggle" | "expand" | "collapse" | "select" | "scroll_into_view",
+  value?: string,
+) => boolean
 
 export interface RenderLib {
   createRenderer: (width: number, height: number, options?: { testing: boolean }) => Pointer | null
@@ -1680,6 +1841,22 @@ export interface RenderLib {
   onceNativeEvent: (name: string, handler: (data: ArrayBuffer) => void) => void
   offNativeEvent: (name: string, handler: (data: ArrayBuffer) => void) => void
   onAnyNativeEvent: (handler: (name: string, data: ArrayBuffer) => void) => void
+
+  // Accessibility API
+  accessibilityCreateBridge: () => Pointer | null
+  accessibilityDestroyBridge: (bridge: Pointer) => void
+  accessibilitySetEnabled: (bridge: Pointer, enabled: boolean) => void
+  accessibilityIsEnabled: (bridge: Pointer) => boolean
+  accessibilityUpsertNode: (bridge: Pointer, nodeData: AccessibilityNodeData) => boolean
+  accessibilityRemoveNode: (bridge: Pointer, nodeId: string) => boolean
+  accessibilitySetFocus: (bridge: Pointer, nodeId: string | null) => boolean
+  accessibilityAnnounce: (bridge: Pointer, message: string, priority: "off" | "polite" | "assertive") => boolean
+  accessibilityNotifyPropertyChanged: (bridge: Pointer, nodeId: string, property: AccessibilityProperty) => boolean
+  accessibilitySetActionCallback: (bridge: Pointer, callback: AccessibilityActionCallback | null) => void
+  accessibilityGetNodeCount: (bridge: Pointer) => number
+  accessibilityClear: (bridge: Pointer) => void
+  accessibilityIsPlatformSupported: () => boolean
+  accessibilityGetPlatformName: () => string
 }
 
 class FFIRenderLib implements RenderLib {
@@ -3482,6 +3659,209 @@ class FFIRenderLib implements RenderLib {
 
   public onAnyNativeEvent(handler: (name: string, data: ArrayBuffer) => void): void {
     this._anyEventHandlers.push(handler)
+  }
+
+  // Accessibility API implementations
+  private accessibilityActionCallbackWrapper: any = null
+
+  public accessibilityCreateBridge(): Pointer | null {
+    return this.opentui.symbols.accessibilityCreateBridge()
+  }
+
+  public accessibilityDestroyBridge(bridge: Pointer): void {
+    this.opentui.symbols.accessibilityDestroyBridge(bridge)
+  }
+
+  public accessibilitySetEnabled(bridge: Pointer, enabled: boolean): void {
+    this.opentui.symbols.accessibilitySetEnabled(bridge, enabled)
+  }
+
+  public accessibilityIsEnabled(bridge: Pointer): boolean {
+    return this.opentui.symbols.accessibilityIsEnabled(bridge)
+  }
+
+  public accessibilityUpsertNode(bridge: Pointer, nodeData: AccessibilityNodeData): boolean {
+    // Convert state flags to packed u32
+    const stateFlags = this.packStateFlags(nodeData.state)
+
+    // Pack the node data struct - enums expect string keys that map to numeric values internally
+    const packedData = AccessibilityNodeDataStruct.pack({
+      id: nodeData.id,
+      id_len: nodeData.id.length,
+      role: nodeData.role,
+      name: nodeData.name ?? null,
+      name_len: nodeData.name?.length ?? 0,
+      value: nodeData.value ?? null,
+      value_len: nodeData.value?.length ?? 0,
+      description: nodeData.description ?? null,
+      description_len: nodeData.description?.length ?? 0,
+      hint: nodeData.hint ?? null,
+      hint_len: nodeData.hint?.length ?? 0,
+      rect_x: nodeData.rect.x,
+      rect_y: nodeData.rect.y,
+      rect_width: nodeData.rect.width,
+      rect_height: nodeData.rect.height,
+      state_flags: stateFlags,
+      parent_id: nodeData.parentId ?? null,
+      parent_id_len: nodeData.parentId?.length ?? 0,
+      child_count: nodeData.childCount,
+      live_setting: nodeData.liveSetting ?? "off",
+      orientation: nodeData.orientation ?? "horizontal",
+      level: nodeData.level,
+      _padding: 0,
+      min_value: nodeData.minValue ?? 0,
+      max_value: nodeData.maxValue ?? 0,
+      current_value: nodeData.currentValue ?? 0,
+    })
+
+    return this.opentui.symbols.accessibilityUpsertNode(bridge, ptr(packedData))
+  }
+
+  public accessibilityRemoveNode(bridge: Pointer, nodeId: string): boolean {
+    const idBytes = this.encoder.encode(nodeId)
+    return this.opentui.symbols.accessibilityRemoveNode(bridge, idBytes, idBytes.length)
+  }
+
+  public accessibilitySetFocus(bridge: Pointer, nodeId: string | null): boolean {
+    if (nodeId === null) {
+      return this.opentui.symbols.accessibilitySetFocus(bridge, null, 0)
+    }
+    const idBytes = this.encoder.encode(nodeId)
+    return this.opentui.symbols.accessibilitySetFocus(bridge, idBytes, idBytes.length)
+  }
+
+  public accessibilityAnnounce(bridge: Pointer, message: string, priority: "off" | "polite" | "assertive"): boolean {
+    const msgBytes = this.encoder.encode(message)
+    const priorityValue = priority === "off" ? 0 : priority === "polite" ? 1 : 2
+    return this.opentui.symbols.accessibilityAnnounce(bridge, msgBytes, msgBytes.length, priorityValue)
+  }
+
+  public accessibilityNotifyPropertyChanged(bridge: Pointer, nodeId: string, property: AccessibilityProperty): boolean {
+    const idBytes = this.encoder.encode(nodeId)
+    const propertyValue = this.propertyToValue(property)
+    return this.opentui.symbols.accessibilityNotifyPropertyChanged(bridge, idBytes, idBytes.length, propertyValue)
+  }
+
+  public accessibilitySetActionCallback(bridge: Pointer, callback: AccessibilityActionCallback | null): void {
+    if (callback === null) {
+      this.opentui.symbols.accessibilitySetActionCallback(bridge, null)
+      this.accessibilityActionCallbackWrapper = null
+      return
+    }
+
+    const jsCallback = new JSCallback(
+      (
+        nodeIdPtr: Pointer,
+        nodeIdLen: bigint | number,
+        action: number,
+        valuePtr: Pointer | null,
+        valueLen: bigint | number,
+      ) => {
+        try {
+          const idLen = typeof nodeIdLen === "bigint" ? Number(nodeIdLen) : nodeIdLen
+          const vLen = typeof valueLen === "bigint" ? Number(valueLen) : valueLen
+
+          const nodeIdBuffer = toArrayBuffer(nodeIdPtr, 0, idLen)
+          const nodeId = this.decoder.decode(new Uint8Array(nodeIdBuffer))
+
+          let value: string | undefined
+          if (valuePtr && vLen > 0) {
+            const valueBuffer = toArrayBuffer(valuePtr, 0, vLen)
+            value = this.decoder.decode(new Uint8Array(valueBuffer))
+          }
+
+          const actionName = this.valueToAction(action)
+          return callback(nodeId, actionName, value) ? 1 : 0
+        } catch (error) {
+          console.error("Error in accessibility action callback:", error)
+          return 0
+        }
+      },
+      {
+        args: ["ptr", "usize", "u32", "ptr", "usize"],
+        returns: "bool",
+      },
+    )
+
+    this.accessibilityActionCallbackWrapper = jsCallback
+    this.opentui.symbols.accessibilitySetActionCallback(bridge, jsCallback.ptr)
+  }
+
+  public accessibilityGetNodeCount(bridge: Pointer): number {
+    const result = this.opentui.symbols.accessibilityGetNodeCount(bridge)
+    return typeof result === "bigint" ? Number(result) : result
+  }
+
+  public accessibilityClear(bridge: Pointer): void {
+    this.opentui.symbols.accessibilityClear(bridge)
+  }
+
+  public accessibilityIsPlatformSupported(): boolean {
+    return this.opentui.symbols.accessibilityIsPlatformSupported()
+  }
+
+  public accessibilityGetPlatformName(): string {
+    const maxLen = 64
+    const outBuffer = new Uint8Array(maxLen)
+    const actualLen = this.opentui.symbols.accessibilityGetPlatformName(outBuffer, maxLen)
+    const len = typeof actualLen === "bigint" ? Number(actualLen) : actualLen
+    return this.decoder.decode(outBuffer.slice(0, len))
+  }
+
+  // Helper methods for accessibility
+  private packStateFlags(state: AccessibilityStateFlags): number {
+    let flags = 0
+    if (state.checked) flags |= 1 << 0
+    if (state.selected) flags |= 1 << 1
+    if (state.expanded) flags |= 1 << 2
+    if (state.disabled) flags |= 1 << 3
+    if (state.readonly) flags |= 1 << 4
+    if (state.required) flags |= 1 << 5
+    if (state.invalid) flags |= 1 << 6
+    if (state.pressed) flags |= 1 << 7
+    if (state.focusable) flags |= 1 << 8
+    if (state.focused) flags |= 1 << 9
+    if (state.hidden) flags |= 1 << 10
+    if (state.busy) flags |= 1 << 11
+    if (state.modal) flags |= 1 << 12
+    if (state.multiselectable) flags |= 1 << 13
+    return flags
+  }
+
+  private propertyToValue(property: AccessibilityProperty): number {
+    const propertyMap: Record<AccessibilityProperty, number> = {
+      name: 0,
+      value: 1,
+      description: 2,
+      role: 3,
+      state: 4,
+      bounds: 5,
+      hint: 6,
+      level: 7,
+      min_value: 8,
+      max_value: 9,
+      current_value: 10,
+    }
+    return propertyMap[property] ?? 0
+  }
+
+  private valueToAction(
+    value: number,
+  ): "invoke" | "focus" | "set_value" | "toggle" | "expand" | "collapse" | "select" | "scroll_into_view" {
+    const actionMap: Record<
+      number,
+      "invoke" | "focus" | "set_value" | "toggle" | "expand" | "collapse" | "select" | "scroll_into_view"
+    > = {
+      0: "invoke",
+      1: "focus",
+      2: "set_value",
+      3: "toggle",
+      4: "expand",
+      5: "collapse",
+      6: "select",
+      7: "scroll_into_view",
+    }
+    return actionMap[value] ?? "invoke"
   }
 }
 
