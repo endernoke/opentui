@@ -218,6 +218,12 @@ pub const MacOSNSA = struct {
         self.action_callback = callback;
     }
 
+    fn tick(ctx: *anyopaque) void {
+        _ = ctx;
+        // Currently no periodic updates needed for macOS NSAccessibility
+        // Placeholder for future use
+    }
+
     /// Map accessibility role to NSAccessibility role
     /// NSAccessibility roles are string constants defined in AppKit
     pub fn roleToNSARole(role: types.Role) []const u8 {
@@ -277,6 +283,7 @@ pub const MacOSNSA = struct {
         .notifyPropertyChanged = notifyPropertyChanged,
         .announce = announce,
         .setActionCallback = setActionCallback,
+        .tick = tick,
     };
 };
 

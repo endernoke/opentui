@@ -42,6 +42,7 @@ pub const PlatformBridge = struct {
         notifyPropertyChanged: *const fn (ptr: *anyopaque, node: *AccessibilityNode, property: types.Property) Error!void,
         announce: *const fn (ptr: *anyopaque, message: []const u8, priority: types.LiveSetting) Error!void,
         setActionCallback: *const fn (ptr: *anyopaque, callback: ?types.ActionCallback) void,
+        tick: *const fn (ptr: *anyopaque) void,
     };
 
     pub const Error = error{
@@ -81,6 +82,10 @@ pub const PlatformBridge = struct {
 
     pub fn setActionCallback(self: PlatformBridge, callback: ?types.ActionCallback) void {
         self.vtable.setActionCallback(self.ptr, callback);
+    }
+
+    pub fn tick(self: PlatformBridge) void {
+        self.vtable.tick(self.ptr);
     }
 };
 

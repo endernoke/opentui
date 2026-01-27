@@ -1674,6 +1674,10 @@ export fn accessibilityClear(bridge: *AccessibilityBridge) void {
     accessibility_bridge.accessibilityClear(bridge);
 }
 
+export fn accessibilityTick(bridge: *AccessibilityBridge) void {
+    accessibility_bridge.accessibilityTick(bridge);
+}
+
 export fn accessibilityIsPlatformSupported() bool {
     return accessibility_bridge.accessibilityIsPlatformSupported();
 }

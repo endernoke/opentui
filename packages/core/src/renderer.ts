@@ -1846,6 +1846,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
           this.recheckHoverState()
         }
 
+        if (this.accessibility) {
+          this.accessibility.tickNative()
+        }
+
         const overallFrameTime = performance.now() - overallStart
 
         // TODO: Add animationRequestTime to stats

@@ -274,6 +274,16 @@ pub const AccessibilityBridge = struct {
             self.focused_id = null;
         }
     }
+
+    /// Performs any periodic updates needed by platforms
+    pub fn tick(self: *Self) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (!self.enabled) return;
+
+        self.platform.tick();
+    }
 };
 
 // ============================================================================
@@ -378,6 +388,11 @@ pub fn accessibilityGetNodeCount(bridge: *AccessibilityBridge) usize {
 /// Clear all nodes
 pub fn accessibilityClear(bridge: *AccessibilityBridge) void {
     bridge.clear();
+}
+
+// Performs any periodic updates needed by platforms
+pub fn accessibilityTick(bridge: *AccessibilityBridge) void {
+    bridge.tick();
 }
 
 /// Check if platform is supported

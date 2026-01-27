@@ -1056,6 +1056,10 @@ function getOpenTUILib(libPath?: string) {
       args: ["ptr"],
       returns: "void",
     },
+    accessibilityTick: {
+      args: ["ptr"],
+      returns: "void",
+    },
     accessibilityIsPlatformSupported: {
       args: [],
       returns: "bool",
@@ -1855,6 +1859,7 @@ export interface RenderLib {
   accessibilitySetActionCallback: (bridge: Pointer, callback: AccessibilityActionCallback | null) => void
   accessibilityGetNodeCount: (bridge: Pointer) => number
   accessibilityClear: (bridge: Pointer) => void
+  accessibilityTick: (bridge: Pointer) => void
   accessibilityIsPlatformSupported: () => boolean
   accessibilityGetPlatformName: () => string
 }
@@ -3794,6 +3799,10 @@ class FFIRenderLib implements RenderLib {
 
   public accessibilityClear(bridge: Pointer): void {
     this.opentui.symbols.accessibilityClear(bridge)
+  }
+
+  public accessibilityTick(bridge: Pointer): void {
+    this.opentui.symbols.accessibilityTick(bridge)
   }
 
   public accessibilityIsPlatformSupported(): boolean {

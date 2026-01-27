@@ -48,6 +48,7 @@ export interface AccessibilityBridge {
   notifyPropertyChanged(nodeId: string, property: string, value: any): void
   notifyFocusChanged(nodeId?: string): void
   announce(message: string, priority: "polite" | "assertive"): void
+  tick(): void
   destroy(): void
 }
 
@@ -109,6 +110,11 @@ class NativeAccessibilityBridge implements AccessibilityBridge {
   announce(message: string, priority: "polite" | "assertive"): void {
     if (!this.bridgePtr) return
     this.lib.accessibilityAnnounce(this.bridgePtr, message, priority)
+  }
+
+  tick(): void {
+    if (!this.bridgePtr) return
+    this.lib.accessibilityTick(this.bridgePtr)
   }
 
   destroy(): void {
@@ -540,6 +546,11 @@ export class AccessibilityManager extends EventEmitter {
 
   public getNode(nodeId: string): AccessibilityNode | undefined {
     return this.nodes.get(nodeId)
+  }
+
+  public tickNative(): void {
+    if (!this.enabled) return
+    this.nativeBridge?.tick()
   }
 
   // Called by native bridge when screen reader requests action

@@ -219,6 +219,12 @@ pub const LinuxATSPI = struct {
         self.action_callback = callback;
     }
 
+    fn tick(ctx: *anyopaque) void {
+        _ = ctx;
+        // Currently no periodic updates needed for AT-SPI2
+        // Placeholder for future use
+    }
+
     /// Map accessibility role to AT-SPI2 role
     /// AT-SPI2 roles are defined in atspi-constants.h
     pub fn roleToATSPIRole(role: types.Role) u32 {
@@ -293,6 +299,7 @@ pub const LinuxATSPI = struct {
         .notifyPropertyChanged = notifyPropertyChanged,
         .announce = announce,
         .setActionCallback = setActionCallback,
+        .tick = tick,
     };
 };
 
