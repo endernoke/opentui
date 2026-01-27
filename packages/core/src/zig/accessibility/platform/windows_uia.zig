@@ -36,43 +36,10 @@ pub const WindowsUIA = struct {
     hwnd: ?win.HWND,
     com_initialized: bool,
 
-    providers: std.StringHashMap(*UIAProvider),
-    root_provider: ?*UIAProvider,
-    focused_provider: ?*UIAProvider,
-
-    // Initialization state
     initialized: bool,
-
-    // Next runtime ID counter
-    next_runtime_id: u32,
 
     const Self = @This();
     const CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("OpenTUI_UIA_Host");
-
-    /// UIA Provider wrapper for a single accessibility node
-    /// This will implement COM interfaces in the full implementation
-    pub const UIAProvider = struct {
-        node: *AccessibilityNode,
-        runtime_id: u32,
-        parent: ?*UIAProvider,
-        children: std.ArrayList(*UIAProvider),
-
-        pub fn init(allocator: Allocator, node: *AccessibilityNode, runtime_id: u32) !*UIAProvider {
-            const provider = try allocator.create(UIAProvider);
-            provider.* = .{
-                .node = node,
-                .runtime_id = runtime_id,
-                .parent = null,
-                .children = .{},
-            };
-            return provider;
-        }
-
-        pub fn deinit(self: *UIAProvider, allocator: Allocator) void {
-            self.children.deinit(allocator);
-            allocator.destroy(self);
-        }
-    };
 
     pub fn create(allocator: Allocator) !PlatformBridge {
         const self = try allocator.create(Self);
@@ -83,11 +50,7 @@ pub const WindowsUIA = struct {
             .action_callback = null,
             .hwnd = null,
             .com_initialized = false,
-            .providers = std.StringHashMap(*UIAProvider).init(allocator),
-            .root_provider = null,
-            .focused_provider = null,
             .initialized = false,
-            .next_runtime_id = 1,
         };
 
         // Store global reference for window procedure
@@ -105,7 +68,6 @@ pub const WindowsUIA = struct {
         };
     }
 
-    /// Initialize Windows UIA infrastructure
     fn initializeUIA(self: *Self) !void {
         if (builtin.os.tag != .windows) {
             return;
@@ -168,7 +130,6 @@ pub const WindowsUIA = struct {
         self.initialized = true;
     }
 
-    /// Window procedure for handling WM_GETOBJECT
     fn windowProc(hwnd: win.HWND, msg: win.UINT, wParam: win.WPARAM, lParam: win.LPARAM) callconv(win.cc) win.LRESULT {
         switch (msg) {
             win.WM_DESTROY => {
@@ -208,37 +169,7 @@ pub const WindowsUIA = struct {
 
         if (!self.initialized) return;
 
-        // Generate runtime ID (unique within this provider tree)
-        const runtime_id = @as(u32, @truncate(self.providers.count() + 1));
-
-        // Create UIA provider for this node
-        const provider = UIAProvider.init(self.allocator, node, runtime_id) catch {
-            return PlatformBridge.Error.OutOfMemory;
-        };
-
-        // Store reference
-        self.providers.put(node.id, provider) catch {
-            provider.deinit(self.allocator);
-            return PlatformBridge.Error.OutOfMemory;
-        };
-
-        // Link to parent provider if exists
-        if (node.parent_id) |parent_id| {
-            if (self.providers.get(parent_id)) |parent_provider| {
-                provider.parent = parent_provider;
-                parent_provider.children.append(self.allocator, provider) catch {
-                    return PlatformBridge.Error.OutOfMemory;
-                };
-            }
-        } else {
-            // This is a root node
-            self.root_provider = provider;
-        }
-
-        // Store platform data reference in node
-        node.platform_data = provider;
-
-        // TODO: Raise UIA structure changed event
+        // TODO
         logger.debug("UIA: Added node '{s}' with role {s}", .{ node.id, node.role.name() });
     }
 
@@ -247,45 +178,15 @@ pub const WindowsUIA = struct {
 
         if (!self.initialized) return;
 
-        const provider = self.providers.get(node.id) orelse {
-            return PlatformBridge.Error.NodeNotFound;
-        };
-        _ = provider;
-
-        // TODO: Raise UIA property changed events for modified properties
+        // TODO
         logger.debug("UIA: Updated node '{s}'", .{node.id});
     }
 
     fn removeNode(ctx: *anyopaque, node: *AccessibilityNode) PlatformBridge.Error!void {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+        _ = ctx;
 
-        if (!self.initialized) return;
-
-        if (self.providers.fetchRemove(node.id)) |kv| {
-            const provider = kv.value;
-
-            // Remove from parent's children list
-            if (provider.parent) |parent| {
-                for (parent.children.items, 0..) |child, i| {
-                    if (child == provider) {
-                        _ = parent.children.orderedRemove(i);
-                        break;
-                    }
-                }
-            }
-
-            // Clear root if this was the root
-            if (self.root_provider == provider) {
-                self.root_provider = null;
-            }
-
-            // Clean up
-            provider.deinit(self.allocator);
-            node.platform_data = null;
-
-            // TODO: Raise UIA structure changed event
-            logger.debug("UIA: Removed node '{s}'", .{node.id});
-        }
+        // TODO
+        logger.debug("UIA: Removed node '{s}'", .{node.id});
     }
 
     fn notifyFocusChanged(ctx: *anyopaque, node: ?*AccessibilityNode) PlatformBridge.Error!void {
@@ -315,9 +216,7 @@ pub const WindowsUIA = struct {
 
         if (!self.initialized) return;
 
-        // TODO: Call UiaRaiseNotificationEvent
-        // NotificationKind: ActionCompleted
-        // NotificationProcessing: based on priority (ImportantAll for assertive, All for polite)
+        // TODO
 
         const priority_str = switch (priority) {
             .off => "off",
