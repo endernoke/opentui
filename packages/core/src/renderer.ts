@@ -550,6 +550,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     // Initialize accessibility if enabled
     if (config.accessibility?.enabled) {
       this.accessibility = new AccessibilityManager(this)
+      this.accessibility.setRenderLib(this.lib)
       this.accessibility.setEnabled(true)
     }
 
