@@ -201,7 +201,6 @@ pub const UIARootProvider = struct {
     }
 
     fn getPropertyValue(ptr: *win.IRawElementProviderSimple, property_id: i32, ret: *win.VARIANT) callconv(win.cc) win.HRESULT {
-        // logToFile("UIA Root: getPropertyValue called", .{});
         if (@intFromPtr(ret) == 0) {
             logToFile("UIA Root: getPropertyValue called with null ret pointer", .{});
             return win.E_POINTER;
@@ -504,8 +503,10 @@ pub const WindowsUIA = struct {
             return;
         }
 
-        // Initialize COM
-        const hr = zigwin32.system.com.CoInitializeEx(null, zigwin32.system.com.COINIT_APARTMENTTHREADED);
+        const hInstance = zigwin32.system.library_loader.GetModuleHandleW(null);
+
+        // The docs aren't happy about using COINIT_MULTITHREADED in a GUI program but we need raw performance
+        const hr = zigwin32.system.com.CoInitializeEx(null, zigwin32.system.com.COINIT_MULTITHREADED);
         if (zigwin32.zig.FAILED(hr)) {
             logger.err("Failed to initialize COM: 0x{X}", .{@as(u32, @bitCast(hr))});
             return error.InitializationFailed;
@@ -520,7 +521,7 @@ pub const WindowsUIA = struct {
             .lpfnWndProc = windowProc,
             .cbClsExtra = 0,
             .cbWndExtra = 0,
-            .hInstance = zigwin32.system.library_loader.GetModuleHandleW(null),
+            .hInstance = hInstance,
             .hIcon = null,
             .hCursor = zigwin32.ui.windows_and_messaging.LoadCursorW(null, zigwin32.ui.windows_and_messaging.IDC_ARROW),
             .hbrBackground = @ptrFromInt(@intFromEnum(zigwin32.ui.windows_and_messaging.COLOR_WINDOW) + 1),
@@ -556,7 +557,7 @@ pub const WindowsUIA = struct {
             300,
             null, // No parent
             null, // No menu
-            zigwin32.system.library_loader.GetModuleHandleW(null),
+            hInstance,
             null, // No param
         );
 
@@ -590,31 +591,31 @@ pub const WindowsUIA = struct {
         switch (msg) {
             zigwin32.ui.windows_and_messaging.WM_GETOBJECT => {
                 // Handle UIA requests
-                // if (lParam == win.UiaRootObjectId) {
-                if (g_windows_uia) |uia| {
-                    if (uia.root_provider) |root| {
-                        _ = root.addRef();
-                        const ans = win.uiautomationcore.UiaReturnRawElementProvider(
-                            hwnd,
-                            wParam,
-                            lParam,
-                            root.asSimple(),
-                        );
-                        return ans;
+                if (lParam == win.UiaRootObjectId) {
+                    if (g_windows_uia) |uia| {
+                        if (uia.root_provider) |root| {
+                            // _ = root.addRef();
+                            return win.uiautomationcore.UiaReturnRawElementProvider(
+                                hwnd,
+                                wParam,
+                                lParam,
+                                root.asSimple(),
+                            );
+                        }
                     }
                 }
-                // }
-                return zigwin32.ui.windows_and_messaging.DefWindowProcW(hwnd, msg, wParam, lParam);
-                // return 0;
             },
             zigwin32.ui.windows_and_messaging.WM_DESTROY => {
                 _ = zigwin32.ui.windows_and_messaging.PostQuitMessage(0);
                 return 0;
             },
-            else => {
-                return zigwin32.ui.windows_and_messaging.DefWindowProcW(hwnd, msg, wParam, lParam);
+            zigwin32.ui.windows_and_messaging.WM_CLOSE => {
+                _ = zigwin32.ui.windows_and_messaging.DestroyWindow(hwnd);
+                return 0;
             },
+            else => {},
         }
+        return zigwin32.ui.windows_and_messaging.DefWindowProcW(hwnd, msg, wParam, lParam);
     }
 
     fn deinit(ctx: *anyopaque) void {
