@@ -44,6 +44,12 @@ fn applyDependencies(b: *std.Build, module: *std.Build.Module, optimize: std.bui
     })) |uucode_dep| {
         module.addImport("uucode", uucode_dep.module("uucode"));
     }
+    // Add zigwin32 bindings for Windows accessibility APIs
+    if (target.result.os.tag == .windows) {
+        if (b.lazyDependency("zigwin32", .{})) |zigwin32_dep| {
+            module.addImport("zigwin32", zigwin32_dep.module("win32"));
+        }
+    }
 }
 
 fn checkZigVersion() void {

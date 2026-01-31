@@ -8,6 +8,10 @@
             .url = "https://github.com/jacobsandlund/uucode/archive/84ceda8561a17ba4a9b96ac5c583f779660bbd4e.tar.gz",
             .hash = "uucode-0.1.0-ZZjBPtA_TQCWp5PIKmfm5tu1WOkKWFmBGFEMxircPfkA",
         },
+        .zigwin32 = .{
+            .url = "https://github.com/marlersoft/zigwin32/archive/5587b16fa040573846a6bf531301f6206d31a6bf.tar.gz",
+            .hash = "zigwin32-25.0.28-preview-AAAAAICM5AMResOGQnQ85mfe60TTOQeMtt7GRATUOKoP",
+        },
     },
     .paths = .{
         "build.zig",

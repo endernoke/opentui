@@ -5,6 +5,9 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const zigwin32 = @import("zigwin32");
+
+pub const UIA_IDs = @import("./windows_uia_ids.zig");
 
 // ============================================================================
 // Calling Convention
@@ -35,7 +38,7 @@ pub const WPARAM = usize;
 pub const LPARAM = isize;
 pub const LRESULT = isize;
 
-pub const HWND = *opaque {};
+pub const HWND = zigwin32.foundation.HWND;
 pub const HINSTANCE = *opaque {};
 pub const HMODULE = HINSTANCE; // HMODULE is alias for HINSTANCE
 pub const ATOM = WORD;
@@ -67,18 +70,13 @@ pub const GUID = extern struct {
             self.Data3 == other.Data3 and
             std.mem.eql(u8, &self.Data4, &other.Data4);
     }
+    pub fn asString(self: *const GUID) []const u8 {
+        return std.fmt.allocPrint(std.heap.page_allocator, "{x:08}-{x:04}-{x:04}-{x:02}{x:02}-{x:02}{x:02}{x:02}{x:02}{x:02}{x:02}", .{ self.Data1, self.Data2, self.Data3, self.Data4[0], self.Data4[1], self.Data4[2], self.Data4[3], self.Data4[4], self.Data4[5], self.Data4[6], self.Data4[7] }) catch "invalid-guid";
+    }
 };
 
 pub const IID = GUID;
 pub const REFIID = *const IID;
-
-// Common GUIDs
-pub const IID_IUnknown = GUID{
-    .Data1 = 0x00000000,
-    .Data2 = 0x0000,
-    .Data3 = 0x0000,
-    .Data4 = .{ 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46 },
-};
 
 // ============================================================================
 // HRESULT Values
@@ -105,6 +103,8 @@ pub fn FAILED(hr: HRESULT) bool {
 // VARIANT Types
 // ============================================================================
 
+pub const VARENUM = enum(WORD) { VT_EMPTY = 0, VT_NULL = 1, VT_I2 = 2, VT_I4 = 3, VT_R4 = 4, VT_R8 = 5, VT_CY = 6, VT_DATE = 7, VT_BSTR = 8, VT_DISPATCH = 9, VT_ERROR = 10, VT_BOOL = 11, VT_VARIANT = 12, VT_UNKNOWN = 13, VT_DECIMAL = 14, VT_I1 = 16, VT_UI1 = 17, VT_UI2 = 18, VT_UI4 = 19, VT_I8 = 20, VT_UI8 = 21, VT_INT = 22, VT_UINT = 23, VT_VOID = 24, VT_HRESULT = 25, VT_PTR = 26, VT_SAFEARRAY = 27, VT_CARRAY = 28, VT_USERDEFINED = 29, VT_LPSTR = 30, VT_LPWSTR = 31, VT_RECORD = 36, VT_INT_PTR = 37, VT_UINT_PTR = 38, VT_FILETIME = 64, VT_BLOB = 65, VT_STREAM = 66, VT_STORAGE = 67, VT_STREAMED_OBJECT = 68, VT_STORED_OBJECT = 69, VT_BLOB_OBJECT = 70, VT_CF = 71, VT_CLSID = 72, VT_VERSIONED_STREAM = 73, VT_BSTR_BLOB = 0xfff, VT_VECTOR = 0x1000, VT_ARRAY = 0x2000, VT_BYREF = 0x4000, VT_RESERVED = 0x8000, VT_ILLEGAL = 0xffff, VT_ILLEGALMASKED = 0xfff, VT_TYPEMASK = 0xfff };
+
 pub const VT_EMPTY: WORD = 0;
 pub const VT_NULL: WORD = 1;
 pub const VT_I4: WORD = 3;
@@ -118,65 +118,111 @@ pub const VT_ARRAY: WORD = 0x2000;
 pub const VARIANT_TRUE: i16 = -1;
 pub const VARIANT_FALSE: i16 = 0;
 
-pub const VARIANT = extern struct {
-    vt: WORD,
-    wReserved1: WORD = 0,
-    wReserved2: WORD = 0,
-    wReserved3: WORD = 0,
-    data: extern union {
-        llVal: i64,
-        lVal: i32,
-        iVal: i16,
-        bVal: u8,
-        fltVal: f32,
-        dblVal: f64,
-        boolVal: i16,
-        scode: i32,
-        bstrVal: BSTR,
-        punkVal: ?*IUnknown,
-        parray: ?*SAFEARRAY,
+pub const VARTYPE = WORD;
+pub const VARIANT_BOOL = i16;
+pub const SCODE = i32;
+pub const LONGLONG = i64;
+pub const SHORT = i16;
+pub const ULONGLONG = u64;
+pub const USHORT = u16;
+pub const CHAR = i8;
+pub const PVOID = *anyopaque;
+pub const CY = extern union { // 8 bytes
+    DUMMYSTRUCTNAME: extern struct { // 8 bytes
+        Lo: ULONG,
+        Hi: LONG,
     },
-
-    pub fn initEmpty() VARIANT {
-        return .{ .vt = VT_EMPTY, .data = .{ .llVal = 0 } };
-    }
-
-    pub fn initBool(val: bool) VARIANT {
-        return .{
-            .vt = VT_BOOL,
-            .data = .{ .boolVal = if (val) VARIANT_TRUE else VARIANT_FALSE },
-        };
-    }
-
-    pub fn initI4(val: i32) VARIANT {
-        return .{
-            .vt = VT_I4,
-            .data = .{ .lVal = val },
-        };
-    }
-
-    pub fn initBstr(bstr: BSTR) VARIANT {
-        return .{
-            .vt = VT_BSTR,
-            .data = .{ .bstrVal = bstr },
-        };
-    }
-
-    pub fn initR8(val: f64) VARIANT {
-        return .{
-            .vt = VT_R8,
-            .data = .{ .dblVal = val },
-        };
-    }
+    int64: LONGLONG,
+};
+pub const DATE = f64; // DATE is a double
+pub const DECIMAL = extern struct { // 16 bytes
+    wReserved: USHORT,
+    DUMMYUNIONNAME: extern union { // 2 bytes
+        DUMMYSTRUCTNAME: extern struct {
+            scale: BYTE,
+            sign: BYTE,
+        },
+        signscale: USHORT,
+    },
+    Hi32: ULONG,
+    DUMMYUNIONNAME2: extern union { // 8 bytes
+        DUMMYSTRUCTNAME2: extern struct { // 8 bytes
+            Lo32: ULONG,
+            Mid32: ULONG,
+        },
+        Lo64: ULONGLONG,
+    },
 };
 
-// ============================================================================
-// SAFEARRAY
-// ============================================================================
+pub const IDispatch = opaque {};
+pub const IRecordInfo = opaque {};
+
+pub const VARIANT = extern struct {
+    __VARIANT_NAME_1: extern union {
+        __VARIANT_NAME_2: extern struct {
+            vt: VARTYPE,
+            wReserved1: WORD,
+            wReserved2: WORD,
+            wReserved3: WORD,
+            __VARIANT_NAME_3: extern union {
+                llVal: LONGLONG,
+                lVal: LONG,
+                bVal: BYTE,
+                iVal: SHORT,
+                fltVal: f32,
+                dblVal: f64,
+                boolVal: VARIANT_BOOL,
+                __OBSOLETE__VARIANT_BOOL: VARIANT_BOOL,
+                scode: SCODE,
+                cyVal: CY,
+                date: DATE,
+                bstrVal: BSTR,
+                punkVal: ?*IUnknown,
+                pdispVal: ?*IDispatch,
+                parray: ?*SAFEARRAY,
+                pbVal: ?*BYTE,
+                piVal: ?*SHORT,
+                plVal: ?*LONG,
+                pllVal: ?*LONGLONG,
+                pfltVal: ?*f32,
+                pdblVal: ?*f64,
+                pboolVal: ?*VARIANT_BOOL,
+                __OBSOLETE__VARIANT_PBOOL: ?*VARIANT_BOOL,
+                pscode: ?*SCODE,
+                pcyVal: ?*CY,
+                pdate: ?*DATE,
+                pbstrVal: ?*BSTR,
+                ppunkVal: ?**IUnknown,
+                ppdispVal: ?**IDispatch,
+                pparray: ?**SAFEARRAY,
+                pvarVal: ?*VARIANT,
+                byref: PVOID,
+                cVal: CHAR,
+                uiVal: USHORT,
+                ulVal: ULONG,
+                ullVal: ULONGLONG,
+                intVal: INT,
+                uintVal: UINT,
+                pdecVal: ?*DECIMAL,
+                pcVal: ?*CHAR,
+                puiVal: ?*USHORT,
+                pulVal: ?*ULONG,
+                pullVal: ?*ULONGLONG,
+                pintVal: ?*INT,
+                puintVal: ?*UINT,
+                __VARIANT_NAME_4: extern struct {
+                    pvRecord: PVOID,
+                    pRecInfo: ?*IRecordInfo,
+                },
+            },
+        },
+        decVal: DECIMAL,
+    },
+};
 
 pub const SAFEARRAY = extern struct {
-    cDims: WORD,
-    fFeatures: WORD,
+    cDims: USHORT,
+    fFeatures: USHORT,
     cbElements: ULONG,
     cLocks: ULONG,
     pvData: ?*anyopaque,
@@ -187,10 +233,6 @@ pub const SAFEARRAYBOUND = extern struct {
     cElements: ULONG,
     lLbound: LONG,
 };
-
-// ============================================================================
-// UIA Rectangle
-// ============================================================================
 
 pub const UiaRect = extern struct {
     left: f64,
@@ -253,129 +295,6 @@ pub const NavigateDirection = enum(i32) {
 };
 
 // ============================================================================
-// UIA Control Types
-// ============================================================================
-
-pub const UIA_ButtonControlTypeId: i32 = 50000;
-pub const UIA_CalendarControlTypeId: i32 = 50001;
-pub const UIA_CheckBoxControlTypeId: i32 = 50002;
-pub const UIA_ComboBoxControlTypeId: i32 = 50003;
-pub const UIA_EditControlTypeId: i32 = 50004;
-pub const UIA_HyperlinkControlTypeId: i32 = 50005;
-pub const UIA_ImageControlTypeId: i32 = 50006;
-pub const UIA_ListItemControlTypeId: i32 = 50007;
-pub const UIA_ListControlTypeId: i32 = 50008;
-pub const UIA_MenuControlTypeId: i32 = 50009;
-pub const UIA_MenuBarControlTypeId: i32 = 50010;
-pub const UIA_MenuItemControlTypeId: i32 = 50011;
-pub const UIA_ProgressBarControlTypeId: i32 = 50012;
-pub const UIA_RadioButtonControlTypeId: i32 = 50013;
-pub const UIA_ScrollBarControlTypeId: i32 = 50014;
-pub const UIA_SliderControlTypeId: i32 = 50015;
-pub const UIA_SpinnerControlTypeId: i32 = 50016;
-pub const UIA_StatusBarControlTypeId: i32 = 50017;
-pub const UIA_TabControlTypeId: i32 = 50018;
-pub const UIA_TabItemControlTypeId: i32 = 50019;
-pub const UIA_TextControlTypeId: i32 = 50020;
-pub const UIA_ToolBarControlTypeId: i32 = 50021;
-pub const UIA_ToolTipControlTypeId: i32 = 50022;
-pub const UIA_TreeControlTypeId: i32 = 50023;
-pub const UIA_TreeItemControlTypeId: i32 = 50024;
-pub const UIA_CustomControlTypeId: i32 = 50025;
-pub const UIA_GroupControlTypeId: i32 = 50026;
-pub const UIA_ThumbControlTypeId: i32 = 50027;
-pub const UIA_DataGridControlTypeId: i32 = 50028;
-pub const UIA_DataItemControlTypeId: i32 = 50029;
-pub const UIA_DocumentControlTypeId: i32 = 50030;
-pub const UIA_SplitButtonControlTypeId: i32 = 50031;
-pub const UIA_WindowControlTypeId: i32 = 50032;
-pub const UIA_PaneControlTypeId: i32 = 50033;
-pub const UIA_HeaderControlTypeId: i32 = 50034;
-pub const UIA_HeaderItemControlTypeId: i32 = 50035;
-pub const UIA_TableControlTypeId: i32 = 50036;
-pub const UIA_TitleBarControlTypeId: i32 = 50037;
-pub const UIA_SeparatorControlTypeId: i32 = 50038;
-
-// ============================================================================
-// UIA Property IDs
-// ============================================================================
-
-pub const UIA_RuntimeIdPropertyId: i32 = 30000;
-pub const UIA_BoundingRectanglePropertyId: i32 = 30001;
-pub const UIA_ProcessIdPropertyId: i32 = 30002;
-pub const UIA_ControlTypePropertyId: i32 = 30003;
-pub const UIA_LocalizedControlTypePropertyId: i32 = 30004;
-pub const UIA_NamePropertyId: i32 = 30005;
-pub const UIA_AcceleratorKeyPropertyId: i32 = 30006;
-pub const UIA_AccessKeyPropertyId: i32 = 30007;
-pub const UIA_HasKeyboardFocusPropertyId: i32 = 30008;
-pub const UIA_IsKeyboardFocusablePropertyId: i32 = 30009;
-pub const UIA_IsEnabledPropertyId: i32 = 30010;
-pub const UIA_AutomationIdPropertyId: i32 = 30011;
-pub const UIA_ClassNamePropertyId: i32 = 30012;
-pub const UIA_HelpTextPropertyId: i32 = 30013;
-pub const UIA_ClickablePointPropertyId: i32 = 30014;
-pub const UIA_CulturePropertyId: i32 = 30015;
-pub const UIA_IsControlElementPropertyId: i32 = 30016;
-pub const UIA_IsContentElementPropertyId: i32 = 30017;
-pub const UIA_LabeledByPropertyId: i32 = 30018;
-pub const UIA_IsPasswordPropertyId: i32 = 30019;
-pub const UIA_NativeWindowHandlePropertyId: i32 = 30020;
-pub const UIA_ItemTypePropertyId: i32 = 30021;
-pub const UIA_IsOffscreenPropertyId: i32 = 30022;
-pub const UIA_OrientationPropertyId: i32 = 30023;
-pub const UIA_FrameworkIdPropertyId: i32 = 30024;
-pub const UIA_IsRequiredForFormPropertyId: i32 = 30025;
-pub const UIA_ItemStatusPropertyId: i32 = 30026;
-pub const UIA_ValueValuePropertyId: i32 = 30045;
-pub const UIA_ValueIsReadOnlyPropertyId: i32 = 30046;
-pub const UIA_RangeValueValuePropertyId: i32 = 30047;
-pub const UIA_RangeValueIsReadOnlyPropertyId: i32 = 30048;
-pub const UIA_RangeValueMinimumPropertyId: i32 = 30049;
-pub const UIA_RangeValueMaximumPropertyId: i32 = 30050;
-pub const UIA_ToggleToggleStatePropertyId: i32 = 30086;
-
-// ============================================================================
-// UIA Pattern IDs
-// ============================================================================
-
-pub const UIA_InvokePatternId: i32 = 10000;
-pub const UIA_SelectionPatternId: i32 = 10001;
-pub const UIA_ValuePatternId: i32 = 10002;
-pub const UIA_RangeValuePatternId: i32 = 10003;
-pub const UIA_ScrollPatternId: i32 = 10004;
-pub const UIA_ExpandCollapsePatternId: i32 = 10005;
-pub const UIA_GridPatternId: i32 = 10006;
-pub const UIA_GridItemPatternId: i32 = 10007;
-pub const UIA_MultipleViewPatternId: i32 = 10008;
-pub const UIA_WindowPatternId: i32 = 10009;
-pub const UIA_SelectionItemPatternId: i32 = 10010;
-pub const UIA_DockPatternId: i32 = 10011;
-pub const UIA_TablePatternId: i32 = 10012;
-pub const UIA_TableItemPatternId: i32 = 10013;
-pub const UIA_TextPatternId: i32 = 10014;
-pub const UIA_TogglePatternId: i32 = 10015;
-pub const UIA_TransformPatternId: i32 = 10016;
-pub const UIA_ScrollItemPatternId: i32 = 10017;
-pub const UIA_LegacyIAccessiblePatternId: i32 = 10018;
-
-// ============================================================================
-// UIA Event IDs
-// ============================================================================
-
-pub const UIA_AutomationFocusChangedEventId: i32 = 20005;
-pub const UIA_StructureChangedEventId: i32 = 20002;
-pub const UIA_AsyncContentLoadedEventId: i32 = 20006;
-pub const UIA_ToolTipOpenedEventId: i32 = 20000;
-pub const UIA_ToolTipClosedEventId: i32 = 20001;
-pub const UIA_MenuOpenedEventId: i32 = 20003;
-pub const UIA_MenuClosedEventId: i32 = 20007;
-pub const UIA_Invoke_InvokedEventId: i32 = 20009;
-pub const UIA_SelectionItem_ElementSelectedEventId: i32 = 20012;
-pub const UIA_LiveRegionChangedEventId: i32 = 20024;
-pub const UIA_NotificationEventId: i32 = 20035;
-
-// ============================================================================
 // UIA Structure Change Type
 // ============================================================================
 
@@ -418,9 +337,13 @@ pub const NotificationProcessing = enum(i32) {
     CurrentThenMostRecent = 4,
 };
 
-// ============================================================================
-// IUnknown Interface
-// ============================================================================
+pub const IID_IUnknown = GUID{
+    // 00000000-0000-0000-C000-000000000046
+    .Data1 = 0x00000000,
+    .Data2 = 0x0000,
+    .Data3 = 0x0000,
+    .Data4 = .{ 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46 },
+};
 
 pub const IUnknown = extern struct {
     vtable: *const VTable,
@@ -430,29 +353,23 @@ pub const IUnknown = extern struct {
         AddRef: *const fn (*IUnknown) callconv(cc) ULONG,
         Release: *const fn (*IUnknown) callconv(cc) ULONG,
     };
-
-    pub fn QueryInterface(self: *IUnknown, riid: *const GUID, ppvObject: *?*anyopaque) HRESULT {
-        return self.vtable.QueryInterface(self, riid, ppvObject);
-    }
-
-    pub fn AddRef(self: *IUnknown) ULONG {
-        return self.vtable.AddRef(self);
-    }
-
-    pub fn Release(self: *IUnknown) ULONG {
-        return self.vtable.Release(self);
-    }
 };
 
-// ============================================================================
-// IRawElementProviderSimple Interface
-// ============================================================================
-
 pub const IID_IRawElementProviderSimple = GUID{
+    // D6DD68D1-86FD-4332-8666-9ABEDEA2D24C}
     .Data1 = 0xd6dd68d1,
     .Data2 = 0x86fd,
     .Data3 = 0x4332,
     .Data4 = .{ 0x86, 0x66, 0x9a, 0xbe, 0xde, 0xa2, 0xd2, 0x4c },
+};
+
+/// Don't use this
+pub const IID_IRawElementProviderSimple2 = GUID{
+    // A0A839A9-8DA1-4A82-806A-8E0D44E79F56
+    .Data1 = 0xa0a839a9,
+    .Data2 = 0x8da1,
+    .Data3 = 0x4a82,
+    .Data4 = .{ 0x80, 0x6a, 0x8e, 0x0d, 0x44, 0xe7, 0x9f, 0x56 },
 };
 
 pub const IRawElementProviderSimple = extern struct {
@@ -472,11 +389,8 @@ pub const IRawElementProviderSimple = extern struct {
     };
 };
 
-// ============================================================================
-// IRawElementProviderFragment Interface
-// ============================================================================
-
 pub const IID_IRawElementProviderFragment = GUID{
+    // F7063DA8-8359-439C-9297-BBC5299A7D87
     .Data1 = 0xf7063da8,
     .Data2 = 0x8359,
     .Data3 = 0x439c,
@@ -492,12 +406,6 @@ pub const IRawElementProviderFragment = extern struct {
         AddRef: *const fn (*IRawElementProviderFragment) callconv(cc) ULONG,
         Release: *const fn (*IRawElementProviderFragment) callconv(cc) ULONG,
 
-        // IRawElementProviderSimple methods
-        get_ProviderOptions: *const fn (*IRawElementProviderFragment, *i32) callconv(cc) HRESULT,
-        GetPatternProvider: *const fn (*IRawElementProviderFragment, i32, *?*IUnknown) callconv(cc) HRESULT,
-        GetPropertyValue: *const fn (*IRawElementProviderFragment, i32, *VARIANT) callconv(cc) HRESULT,
-        get_HostRawElementProvider: *const fn (*IRawElementProviderFragment, *?*IRawElementProviderSimple) callconv(cc) HRESULT,
-
         // IRawElementProviderFragment methods
         Navigate: *const fn (*IRawElementProviderFragment, NavigateDirection, *?*IRawElementProviderFragment) callconv(cc) HRESULT,
         GetRuntimeId: *const fn (*IRawElementProviderFragment, *?*SAFEARRAY) callconv(cc) HRESULT,
@@ -508,11 +416,8 @@ pub const IRawElementProviderFragment = extern struct {
     };
 };
 
-// ============================================================================
-// IRawElementProviderFragmentRoot Interface
-// ============================================================================
-
 pub const IID_IRawElementProviderFragmentRoot = GUID{
+    // 620CE2A5-AB8F-40A9-86CB-DE3C75599B58
     .Data1 = 0x620ce2a5,
     .Data2 = 0xab8f,
     .Data3 = 0x40a9,
@@ -527,20 +432,6 @@ pub const IRawElementProviderFragmentRoot = extern struct {
         QueryInterface: *const fn (*IRawElementProviderFragmentRoot, *const GUID, *?*anyopaque) callconv(cc) HRESULT,
         AddRef: *const fn (*IRawElementProviderFragmentRoot) callconv(cc) ULONG,
         Release: *const fn (*IRawElementProviderFragmentRoot) callconv(cc) ULONG,
-
-        // IRawElementProviderSimple methods
-        get_ProviderOptions: *const fn (*IRawElementProviderFragmentRoot, *i32) callconv(cc) HRESULT,
-        GetPatternProvider: *const fn (*IRawElementProviderFragmentRoot, i32, *?*IUnknown) callconv(cc) HRESULT,
-        GetPropertyValue: *const fn (*IRawElementProviderFragmentRoot, i32, *VARIANT) callconv(cc) HRESULT,
-        get_HostRawElementProvider: *const fn (*IRawElementProviderFragmentRoot, *?*IRawElementProviderSimple) callconv(cc) HRESULT,
-
-        // IRawElementProviderFragment methods
-        Navigate: *const fn (*IRawElementProviderFragmentRoot, NavigateDirection, *?*IRawElementProviderFragment) callconv(cc) HRESULT,
-        GetRuntimeId: *const fn (*IRawElementProviderFragmentRoot, *?*SAFEARRAY) callconv(cc) HRESULT,
-        get_BoundingRectangle: *const fn (*IRawElementProviderFragmentRoot, *UiaRect) callconv(cc) HRESULT,
-        GetEmbeddedFragmentRoots: *const fn (*IRawElementProviderFragmentRoot, *?*SAFEARRAY) callconv(cc) HRESULT,
-        SetFocus: *const fn (*IRawElementProviderFragmentRoot) callconv(cc) HRESULT,
-        get_FragmentRoot: *const fn (*IRawElementProviderFragmentRoot, *?*IRawElementProviderFragmentRoot) callconv(cc) HRESULT,
 
         // IRawElementProviderFragmentRoot methods
         ElementProviderFromPoint: *const fn (*IRawElementProviderFragmentRoot, f64, f64, *?*IRawElementProviderFragment) callconv(cc) HRESULT,
@@ -762,6 +653,7 @@ pub const user32 = if (builtin.os.tag == .windows) struct {
 pub const kernel32 = if (builtin.os.tag == .windows) struct {
     pub extern "kernel32" fn GetModuleHandleW(?LPCWSTR) callconv(cc) ?HMODULE;
     pub extern "kernel32" fn GetCurrentProcessId() callconv(cc) DWORD;
+    pub extern "kernel32" fn GetLastError() callconv(cc) DWORD;
 } else struct {};
 
 pub const ole32 = if (builtin.os.tag == .windows) struct {
@@ -814,10 +706,10 @@ pub fn utf8ToWide(allocator: std.mem.Allocator, str: []const u8) ![:0]WCHAR {
 }
 
 /// Create a BSTR from a UTF-8 string
-pub fn createBstr(allocator: std.mem.Allocator, str: []const u8) !BSTR {
+pub fn createBstr(allocator: std.mem.Allocator, str: []const u8) BSTR {
     if (builtin.os.tag != .windows) return null;
 
-    const wide = try utf8ToWide(allocator, str);
+    const wide = utf8ToWide(allocator, str) catch return null;
     defer allocator.free(wide);
     return oleaut32.SysAllocString(wide.ptr);
 }
